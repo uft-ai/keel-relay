@@ -36,6 +36,17 @@ func rejectInvalidCredentialWeight(c *gin.Context, field string, weight *int) bo
 	return false
 }
 
+// rejectInvalidOpenAICompatModels rejects operation metadata that would be
+// ambiguous or widen access before anything is persisted.
+func rejectInvalidOpenAICompatModels(c *gin.Context, field string, models []config.OpenAICompatibilityModel) bool {
+	config.NormalizeOpenAICompatModels(models)
+	if errValidate := config.ValidateOpenAICompatModels(models); errValidate != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("%s.%v", field, errValidate)})
+		return true
+	}
+	return false
+}
+
 // rejectInvalidFingerprintProfile fails a write that carries a value the request
 // path would silently ignore, so a typo surfaces here instead of as a warning
 // behind every later request.
@@ -883,7 +894,14 @@ func (h *Handler) PutOpenAICompat(c *gin.Context) {
 				return
 			}
 		}
+		if rejectInvalidOpenAICompatModels(c, fmt.Sprintf("openai-compatibility[%d]", i), arr[i].Models) {
+			return
+		}
 		filtered = append(filtered, arr[i])
+	}
+	if errValidate := config.ValidateOpenAICompatProviders(filtered); errValidate != nil {
+		c.JSON(400, gin.H{"error": errValidate.Error()})
+		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -975,7 +993,11 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		entry.APIKeyEntries = append([]config.OpenAICompatibilityAPIKey(nil), (*body.Value.APIKeyEntries)...)
 	}
 	if body.Value.Models != nil {
-		entry.Models = append([]config.OpenAICompatibilityModel(nil), (*body.Value.Models)...)
+		models := append([]config.OpenAICompatibilityModel(nil), (*body.Value.Models)...)
+		if rejectInvalidOpenAICompatModels(c, "models", models) {
+			return
+		}
+		entry.Models = models
 	}
 	if body.Value.Headers != nil {
 		entry.Headers = config.NormalizeHeaders(*body.Value.Headers)
@@ -987,6 +1009,12 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		entry.RequestScopedErrors = append([]config.RequestScopedErrorRule(nil), *body.Value.RequestScopedErrors...)
 	}
 	normalizeOpenAICompatibilityEntry(&entry)
+	candidate := append([]config.OpenAICompatibility(nil), h.cfg.OpenAICompatibility...)
+	candidate[targetIndex] = entry
+	if errValidate := config.ValidateOpenAICompatProviders(candidate); errValidate != nil {
+		c.JSON(400, gin.H{"error": errValidate.Error()})
+		return
+	}
 	h.cfg.OpenAICompatibility[targetIndex] = entry
 	h.cfg.SanitizeOpenAICompatibility()
 	h.persistLocked(c)

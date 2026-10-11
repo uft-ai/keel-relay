@@ -366,6 +366,8 @@ type homeDispatchModelInfo struct {
 	NativeCapabilities         *registry.NativeCapabilities `json:"native_capabilities,omitempty"`
 	SupportConfigurationUpdate *bool                        `json:"support_configuration_update,omitempty"`
 	UserDefined                bool                         `json:"user_defined"`
+	Operations                 []string                     `json:"operations,omitempty"`
+	Native                     []string                     `json:"native,omitempty"`
 }
 
 func (m *homeDispatchModelInfo) registryModelInfo() *registry.ModelInfo {
@@ -383,7 +385,17 @@ func (m *homeDispatchModelInfo) registryModelInfo() *registry.ModelInfo {
 		NativeCapabilities:         m.NativeCapabilities,
 		SupportConfigurationUpdate: m.SupportConfigurationUpdate != nil && *m.SupportConfigurationUpdate,
 		UserDefined:                m.UserDefined,
+		Operations:                 cloneOptionalStrings(m.Operations),
+		Native:                     cloneOptionalStrings(m.Native),
 	}
+}
+
+// cloneOptionalStrings keeps nil (unset) distinct from a present list.
+func cloneOptionalStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append([]string{}, values...)
 }
 
 type homeDispatchSessionHierarchyDispatcher interface {

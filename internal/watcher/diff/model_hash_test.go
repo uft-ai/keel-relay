@@ -313,3 +313,21 @@ func TestComputeModelHashesIncludeThinking(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeOpenAICompatModelsHashIncludesOperationMetadata(t *testing.T) {
+	base := []config.OpenAICompatibilityModel{{Name: "qwen3.6", Alias: "qwen3.6-native"}}
+	baseHash := ComputeOpenAICompatModelsHash(base)
+	for name, changed := range map[string]config.OpenAICompatibilityModel{
+		"operations": {Name: "qwen3.6", Alias: "qwen3.6-native", Operations: []string{"chat"}},
+		"native":     {Name: "qwen3.6", Alias: "qwen3.6-native", Native: []string{"responses"}},
+		"max output": {Name: "qwen3.6", Alias: "qwen3.6-native", MaxOutputTokens: 4096},
+	} {
+		if baseHash == ComputeOpenAICompatModelsHash([]config.OpenAICompatibilityModel{changed}) {
+			t.Fatalf("%s did not change model hash", name)
+		}
+	}
+	reordered := ComputeOpenAICompatModelsHash([]config.OpenAICompatibilityModel{{Name: "m", Operations: []string{"responses", "chat"}}})
+	if reordered != ComputeOpenAICompatModelsHash([]config.OpenAICompatibilityModel{{Name: "m", Operations: []string{"chat", "responses"}}}) {
+		t.Fatal("operation order must not change model hash")
+	}
+}

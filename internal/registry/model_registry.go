@@ -108,6 +108,14 @@ type ModelInfo struct {
 	// IsCompat enables compatibility handling for this configured API-key model.
 	// It is internal metadata and is not exposed in model listings.
 	IsCompat bool `json:"-"`
+
+	// Operations is the configured client-operation allow-list of an
+	// openai-compatibility entry. Nil means unrestricted (legacy behavior).
+	Operations []string `json:"-"`
+
+	// Native lists operations forwarded to the upstream's own endpoint instead
+	// of being translated to chat completions. Nil means none.
+	Native []string `json:"-"`
 }
 
 // ModelConfig holds optional runtime overrides for a model definition.
@@ -797,6 +805,12 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	}
 	if len(model.SupportedParameters) > 0 {
 		copyModel.SupportedParameters = append([]string(nil), model.SupportedParameters...)
+	}
+	if model.Operations != nil {
+		copyModel.Operations = append([]string{}, model.Operations...)
+	}
+	if model.Native != nil {
+		copyModel.Native = append([]string{}, model.Native...)
 	}
 	if len(model.SupportedInputModalities) > 0 {
 		copyModel.SupportedInputModalities = append([]string(nil), model.SupportedInputModalities...)

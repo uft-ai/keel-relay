@@ -22,6 +22,9 @@ const (
 type apiKeyModelCapabilityRoute struct {
 	upstreamModel string
 	modelInfo     *registry.ModelInfo
+	// viaAlias reports whether the lookup key came from the entry's alias rather
+	// than its upstream name. Alias keys outrank name keys for the same upstream.
+	viaAlias bool
 }
 
 type apiKeyModelCapabilityTable map[string]map[string][]apiKeyModelCapabilityRoute
@@ -61,6 +64,17 @@ func ResolvedAPIKeyModelInfo(req cliproxyexecutor.Request) (*registry.ModelInfo,
 		return nil, false
 	}
 	return modelInfo, true
+}
+
+// ResolvedAPIKeyModelOperations returns the operation allow-list and native
+// operation list of the configured entry bound to this attempt. A nil list means
+// the entry did not set it (legacy behavior).
+func ResolvedAPIKeyModelOperations(req cliproxyexecutor.Request) (operations, native []string, ok bool) {
+	modelInfo, ok := ResolvedAPIKeyModelInfo(req)
+	if !ok {
+		return nil, nil, false
+	}
+	return modelInfo.Operations, modelInfo.Native, true
 }
 
 // ResolvedModelInfo returns the authoritative model capabilities bound to this execution attempt.
@@ -440,7 +454,16 @@ func compileOpenAICompatibleModelCapabilities(out map[string][]apiKeyModelCapabi
 		if support == nil && !models[i].Image {
 			support = &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}
 		}
-		addConfiguredModelCapability(out, models[i].Name, models[i].Alias, "openai-compatibility", support, models[i].IsCompat)
+		info := addConfiguredModelCapability(out, models[i].Name, models[i].Alias, "openai-compatibility", support, models[i].IsCompat)
+		if info == nil {
+			continue
+		}
+		if models[i].Operations != nil {
+			info.Operations = append([]string{}, models[i].Operations...)
+		}
+		if models[i].Native != nil {
+			info.Native = append([]string{}, models[i].Native...)
+		}
 	}
 }
 
@@ -458,9 +481,9 @@ func addConfiguredModelCapability(out map[string][]apiKeyModelCapabilityRoute, n
 	}
 	modelInfo := modelconfig.ResolveModelInfo(name, modelType, support)
 	modelInfo.IsCompat = isCompat
-	route := apiKeyModelCapabilityRoute{upstreamModel: name, modelInfo: modelInfo}
 	seenKeys := make(map[string]struct{})
-	for _, routeModel := range []string{alias, name} {
+	for index, routeModel := range []string{alias, name} {
+		route := apiKeyModelCapabilityRoute{upstreamModel: name, modelInfo: modelInfo, viaAlias: index == 0}
 		_, candidates := modelAliasLookupCandidates(routeModel)
 		for _, candidate := range candidates {
 			key := strings.ToLower(strings.TrimSpace(candidate))
@@ -472,9 +495,14 @@ func addConfiguredModelCapability(out map[string][]apiKeyModelCapabilityRoute, n
 			}
 			seenKeys[key] = struct{}{}
 			duplicate := false
-			for _, existing := range out[key] {
+			for i, existing := range out[key] {
 				if strings.EqualFold(existing.upstreamModel, route.upstreamModel) {
 					duplicate = true
+					// An alias binding replaces a name-derived binding for the same
+					// upstream so the result does not depend on config order.
+					if route.viaAlias && !existing.viaAlias {
+						out[key][i] = route
+					}
 					break
 				}
 			}

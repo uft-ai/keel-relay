@@ -963,6 +963,17 @@ type OpenAICompatibilityModel struct {
 	// Thinking configures the thinking/reasoning capability for this model.
 	// If nil, the model defaults to level-based reasoning with levels ["low", "medium", "high"].
 	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+
+	// Operations optionally restricts the client operations this entry serves.
+	// Unset keeps the legacy behavior; an explicit empty list is rejected.
+	Operations []string `yaml:"operations,omitempty" json:"operations,omitempty"`
+
+	// Native lists operations forwarded to the upstream's own endpoint instead of
+	// being translated to chat completions (responses, completions).
+	Native []string `yaml:"native,omitempty" json:"native,omitempty"`
+
+	// MaxOutputTokens advertises the model's output limit when known; zero means unknown.
+	MaxOutputTokens int `yaml:"max-output-tokens,omitempty" json:"max-output-tokens,omitempty"`
 }
 
 func (m OpenAICompatibilityModel) GetName() string { return m.Name }
@@ -974,5 +985,6 @@ func (m OpenAICompatibilityModel) GetMaxContextLength() int        { return m.Ma
 func (m OpenAICompatibilityModel) GetForceMapping() bool           { return m.ForceMapping }
 func (m OpenAICompatibilityModel) GetIsCompat() bool               { return m.IsCompat }
 func (m OpenAICompatibilityModel) GetUseMaxCompletionTokens() bool { return m.UseMaxCompletionTokens }
+func (m OpenAICompatibilityModel) GetMaxOutputTokens() int         { return m.MaxOutputTokens }
 
 func (m OpenAICompatibilityModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }

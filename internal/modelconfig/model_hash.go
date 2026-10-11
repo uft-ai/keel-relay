@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -20,10 +21,29 @@ func ComputeOpenAICompatModelsHash(models []config.OpenAICompatibilityModel) str
 			if name == "" && alias == "" {
 				continue
 			}
-			out(strings.ToLower(name) + "|" + strings.ToLower(alias) + "|" + strings.TrimSpace(model.DisplayName) + "|" + fmt.Sprintf("image=%t", model.Image) + "|" + fmt.Sprintf("force-mapping=%t", model.ForceMapping) + "|" + fmt.Sprintf("is-compat=%t", model.IsCompat) + "|" + fmt.Sprintf("use-max-completion-tokens=%t", model.UseMaxCompletionTokens) + "|input=" + strings.Join(normalizeModalities(model.InputModalities), ",") + "|output=" + strings.Join(normalizeModalities(model.OutputModalities), ",") + thinkingHashSuffix(model.Thinking))
+			out(strings.ToLower(name) + "|" + strings.ToLower(alias) + "|" + strings.TrimSpace(model.DisplayName) + "|" + fmt.Sprintf("image=%t", model.Image) + "|" + fmt.Sprintf("force-mapping=%t", model.ForceMapping) + "|" + fmt.Sprintf("is-compat=%t", model.IsCompat) + "|" + fmt.Sprintf("use-max-completion-tokens=%t", model.UseMaxCompletionTokens) + "|input=" + strings.Join(normalizeModalities(model.InputModalities), ",") + "|output=" + strings.Join(normalizeModalities(model.OutputModalities), ",") + thinkingHashSuffix(model.Thinking) + openAICompatOperationsHashSuffix(model))
 		}
 	})
 	return hashJoined(keys)
+}
+
+// openAICompatOperationsHashSuffix keeps legacy hashes unchanged when no
+// operation metadata is configured.
+func openAICompatOperationsHashSuffix(model config.OpenAICompatibilityModel) string {
+	if model.Operations == nil && model.Native == nil && model.MaxOutputTokens == 0 {
+		return ""
+	}
+	ops := "unset"
+	if model.Operations != nil {
+		ops = "[" + strings.Join(sortedLower(model.Operations), ",") + "]"
+	}
+	return "|operations=" + ops + "|native=" + strings.Join(sortedLower(model.Native), ",") + fmt.Sprintf("|max-output-tokens=%d", model.MaxOutputTokens)
+}
+
+func sortedLower(values []string) []string {
+	out := normalizeModalities(values)
+	sort.Strings(out)
+	return out
 }
 
 // ComputeVertexCompatModelsHash returns a stable hash for Vertex-compatible models.

@@ -213,6 +213,7 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 			// Skip providers with no base-url; treated as removed
 			continue
 		}
+		NormalizeOpenAICompatModels(e.Models)
 		out = append(out, e)
 	}
 	cfg.OpenAICompatibility = out

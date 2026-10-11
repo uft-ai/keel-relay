@@ -367,3 +367,23 @@ func TestGetDevinModelsFallback(t *testing.T) {
 		t.Errorf("info.DisplayName = %q, want SWE-2", info.DisplayName)
 	}
 }
+
+func TestCloneModelInfoCopiesOperationLists(t *testing.T) {
+	info := &ModelInfo{ID: "qwen3.6", Operations: []string{"chat", "responses"}, Native: []string{"responses"}}
+	cloned := cloneModelInfo(info)
+	info.Operations[0] = "mutated"
+	info.Native[0] = "mutated"
+	if cloned.Operations[0] != "chat" || cloned.Native[0] != "responses" {
+		t.Fatalf("clone shares lists: %+v", cloned)
+	}
+	if legacy := cloneModelInfo(&ModelInfo{ID: "legacy"}); legacy.Operations != nil || legacy.Native != nil {
+		t.Fatalf("legacy clone gained lists: %+v", legacy)
+	}
+	raw, errMarshal := json.Marshal(info)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	if strings.Contains(string(raw), "operations") || strings.Contains(string(raw), "native\"") {
+		t.Fatalf("operation lists exposed: %s", raw)
+	}
+}

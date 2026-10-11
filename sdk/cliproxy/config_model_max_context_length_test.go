@@ -90,3 +90,29 @@ func TestBuildConfigModelsPropagatesMaxContextLength(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildOpenAICompatibilityConfigModelsCarriesOperationMetadata(t *testing.T) {
+	models := buildOpenAICompatibilityConfigModels(&config.OpenAICompatibility{
+		Name: "nan",
+		Models: []config.OpenAICompatibilityModel{
+			{Name: "qwen3.6", Alias: "qwen3.6"},
+			{Name: "rerank", Alias: "rerank", Operations: []string{"rerank"}, MaxOutputTokens: 0},
+			{Name: "qwen3.6", Alias: "qwen3.6-native", Operations: []string{"chat", "responses"}, Native: []string{"responses"}, MaxOutputTokens: 8192},
+		},
+	})
+	if len(models) != 3 {
+		t.Fatalf("models = %d, want 3", len(models))
+	}
+	if models[0].Operations != nil || models[0].MaxCompletionTokens != 0 {
+		t.Fatalf("legacy model gained metadata: %+v", models[0])
+	}
+	if len(models[1].Operations) != 1 || models[1].Operations[0] != "rerank" {
+		t.Fatalf("rerank operations = %v", models[1].Operations)
+	}
+	if models[2].MaxCompletionTokens != 8192 {
+		t.Fatalf("max completion tokens = %d, want 8192", models[2].MaxCompletionTokens)
+	}
+	if models[0].Native != nil || len(models[2].Native) != 1 || models[2].Native[0] != "responses" {
+		t.Fatalf("native = %v / %v, want nil / [responses]", models[0].Native, models[2].Native)
+	}
+}
