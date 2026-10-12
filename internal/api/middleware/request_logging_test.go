@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -712,6 +713,14 @@ func TestRequestLoggingMiddleware_StreamingPreservesFullUUIDForLogger(t *testing
 	}
 	if parsed.Version() != 7 {
 		t.Fatalf("streaming request ID version = %d, want 7", parsed.Version())
+	}
+	paths, err := filepath.Glob(filepath.Join(logsDir, "*.log"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("stream capture files: %v %v", paths, err)
+	}
+	captured, err := os.ReadFile(paths[0])
+	if err != nil || !bytes.Contains(captured, []byte("data: chunk\n\n")) {
+		t.Fatalf("finalization lost queued stream data: %v", err)
 	}
 }
 
