@@ -25,6 +25,8 @@ type operationDispatchState struct {
 	fixed     bool
 	native    bool
 	rejected  bool
+	ledger    *PeriodLedger
+	blocked   *periodExhaustedError
 }
 
 func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) context.Context {
@@ -35,7 +37,7 @@ func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecuto
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, operationDispatchContextKey{}, &operationDispatchState{
-		routing: m.loadAPIKeyModelRouting(), model: authSelectionModelFromOptions(opts, req.Model), operation: RequestedModelOperation(opts),
+		routing: m.loadAPIKeyModelRouting(), model: authSelectionModelFromOptions(opts, req.Model), operation: RequestedModelOperation(opts), ledger: m.PeriodLedger(),
 	})
 }
 
@@ -77,11 +79,19 @@ func (s *operationDispatchState) allows(auth *Auth) bool {
 				continue
 			}
 			if !s.fixed || s.native == operationListed(info.Native, s.operation) {
+				if blocked := periodBlock(s.ledger, auth, route.upstreamModel); blocked != nil {
+					s.blocked = blocked
+					continue
+				}
 				return true
 			}
 		}
 	}
 	if !found && (!s.fixed || !s.native) {
+		if blocked := periodBlock(s.ledger, auth, rewriteModelForAuth(s.model, auth)); blocked != nil {
+			s.blocked = blocked
+			return false
+		}
 		return true
 	}
 	s.rejected = true
@@ -118,6 +128,9 @@ func operationSelectionError(ctx context.Context, err error) error {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if state.blocked != nil {
+		return state.blocked
+	}
 	if state.rejected && !state.fixed {
 		return newUnsupportedOperationError(state.model, state.operation)
 	}

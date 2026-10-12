@@ -551,7 +551,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				stateModel = canonicalModelKey(routeModel)
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
-			m.MarkResult(execCtx, result)
+			m.recordExecutionResult(execCtx, result, auth, false)
 			lastErr = errPrepare
 			continue
 		}
@@ -596,6 +596,10 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if errOperation := checkOperationDispatch(execCtx, execReq, execOpts); errOperation != nil {
 				return cliproxyexecutor.Response{}, errOperation
 			}
+			if blocked := m.periodBlock(auth, execReq.Model); blocked != nil {
+				lastErr = blocked
+				continue
+			}
 			execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
@@ -635,7 +639,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
 				return cliproxyexecutor.Response{}, errCancel
 			}
-			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
+			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, UpstreamModel: execReq.Model, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
@@ -649,7 +653,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if isResponsesCompactAvailabilityNeutralError(execOpts, errExec, result.Error) {
 					m.recordAvailabilityNeutralResult(execCtx, result)
 				} else {
-					m.MarkResult(execCtx, result)
+					m.recordExecutionResult(execCtx, result, auth, false)
 				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
@@ -670,7 +674,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				}
 				continue
 			}
-			m.MarkResult(execCtx, result)
+			m.recordExecutionResult(execCtx, result, auth, false)
 			attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, upstreamModel, aliasResult)
 			rewriteForceMappedResponse(&resp, attemptAliasResult)
 			return resp, nil
@@ -767,7 +771,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				stateModel = canonicalModelKey(routeModel)
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: stateModel, RouteModel: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts, SkipQuotaObservation: true, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
-			m.MarkResult(execCtx, result)
+			m.recordExecutionResult(execCtx, result, auth, false)
 			lastErr = errPrepare
 			continue
 		}
@@ -812,6 +816,10 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if errOperation := checkOperationDispatch(execCtx, execReq, execOpts); errOperation != nil {
 				return cliproxyexecutor.Response{}, errOperation
 			}
+			if blocked := m.periodBlock(auth, execReq.Model); blocked != nil {
+				lastErr = blocked
+				continue
+			}
 			execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
@@ -851,7 +859,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
 				return cliproxyexecutor.Response{}, errCancel
 			}
-			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, SkipQuotaObservation: true, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
+			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, UpstreamModel: execReq.Model, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, SkipQuotaObservation: true, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
@@ -869,7 +877,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					if isCredentialScopedError(errExec) {
 						result.CredentialScope = true
 					}
-					m.MarkResult(execCtx, result)
+					m.recordExecutionResult(execCtx, result, auth, false)
 				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
@@ -890,7 +898,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				}
 				continue
 			}
-			m.MarkResult(execCtx, result)
+			m.recordExecutionResult(execCtx, result, auth, false)
 			attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, upstreamModel, aliasResult)
 			rewriteForceMappedResponse(&resp, attemptAliasResult)
 			return resp, nil
@@ -1124,7 +1132,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				m.reportHomeResult(execCtx, result, auth)
 				releaseAttempt()
 			} else {
-				m.MarkResult(execCtx, result)
+				m.recordExecutionResult(execCtx, result, auth, false)
 			}
 			lastErr = errPrepare
 			if homeMode {

@@ -839,7 +839,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		} else {
 			if modelKey != "" {
-				if !shouldSkipCredentialCooldown(result.Error) {
+				if !shouldSkipCredentialCooldown(result.Error) && !(m.PeriodLedger() != nil && isNanPeriodAuth(auth) && isMonthlyCapResult(result.Error)) {
 					disableCooling := m.cooldownDisabledForAuth(auth)
 					if result.Error != nil && result.Error.Code == ErrorCodeForceCooldown {
 						disableCooling = false
@@ -1093,6 +1093,12 @@ func (m *Manager) updateSessionAffinity(result Result) {
 }
 
 func (m *Manager) recordExecutionResult(ctx context.Context, result Result, auth *Auth, ephemeral bool) {
+	if !ephemeral {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		m.observePeriodResult(ctx, auth, result)
+	}
 	if auth != nil {
 		if result.CredentialVersion == 0 {
 			result.CredentialVersion = auth.CredentialVersion

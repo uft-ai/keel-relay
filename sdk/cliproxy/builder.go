@@ -249,6 +249,10 @@ func (b *Builder) Build() (*Service, error) {
 
 	coreManager := b.coreManager
 	cooldownStateStore := b.cooldownStateStore
+	var periodStore coreauth.PeriodStore
+	if provider, ok := sdkAuth.GetTokenStore().(interface{ PeriodStore() coreauth.PeriodStore }); ok {
+		periodStore = provider.PeriodStore()
+	}
 	var appliedRoutingState *routingRuntimeState
 	if coreManager == nil {
 		tokenStore := sdkAuth.GetTokenStore()
@@ -287,6 +291,7 @@ func (b *Builder) Build() (*Service, error) {
 		accessManager:       accessManager,
 		coreManager:         coreManager,
 		cooldownStateStore:  cooldownStateStore,
+		periodStore:         periodStore,
 		pluginHost:          pluginHost,
 		discoveryManager:    newDiscoveryAdvertiserManager(),
 		appliedRoutingState: appliedRoutingState,

@@ -78,6 +78,9 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.applyRetryConfig(s.cfg)
 	s.configureCooldownStateStore(s.cfg)
+	if errPeriod := s.initializePeriodLedger(ctx); errPeriod != nil {
+		return fmt.Errorf("initialize billing-period ledger: %w", errPeriod)
+	}
 
 	s.registerPluginAuthParser()
 	if s.coreManager != nil && !homeEnabled {
