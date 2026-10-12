@@ -10,6 +10,7 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 type forceMappingExecutor struct {
@@ -76,6 +77,7 @@ type forceMappingCreditsFallbackExecutor struct {
 
 	mu                      sync.Mutex
 	executeModels           []string
+	executePayloads         []string
 	executeCreditsRequested []bool
 	streamModels            []string
 	streamCreditsRequested  []bool
@@ -87,6 +89,7 @@ func (e *forceMappingCreditsFallbackExecutor) Execute(ctx context.Context, _ *Au
 	creditsRequested := AntigravityCreditsRequested(ctx)
 	e.mu.Lock()
 	e.executeModels = append(e.executeModels, req.Model)
+	e.executePayloads = append(e.executePayloads, string(req.Payload))
 	e.executeCreditsRequested = append(e.executeCreditsRequested, creditsRequested)
 	e.mu.Unlock()
 	if !creditsRequested {
@@ -130,6 +133,14 @@ func (e *forceMappingCreditsFallbackExecutor) ExecuteModels() []string {
 	defer e.mu.Unlock()
 	out := make([]string, len(e.executeModels))
 	copy(out, e.executeModels)
+	return out
+}
+
+func (e *forceMappingCreditsFallbackExecutor) ExecutePayloads() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, len(e.executePayloads))
+	copy(out, e.executePayloads)
 	return out
 }
 
@@ -521,6 +532,30 @@ func TestManagerExecute_AntigravityCreditsFallbackForceMappingRewritesResponse(t
 	}
 	if got := string(resp.Payload); !strings.Contains(got, aliasModel) || forceMappingPayloadLeaksUpstream(got, upstreamModel) {
 		t.Fatalf("response payload = %s, want alias %q without upstream %q", got, aliasModel, upstreamModel)
+	}
+}
+
+func TestManagerExecute_AntigravityCreditsFallbackConvertsCompletionsToChat(t *testing.T) {
+	const (
+		upstreamModel = "gemini-3-flash-preview"
+		aliasModel    = "claude-haiku-4-5-20251001"
+	)
+
+	manager, executor := setupForceMappingCreditsFallbackManager(t, upstreamModel, aliasModel)
+	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, Metadata: map[string]any{cliproxyexecutor.RequestPathMetadataKey: "/v1/completions"}}
+	req := cliproxyexecutor.Request{Model: aliasModel, Payload: []byte(`{"model":"` + aliasModel + `","prompt":"hello"}`)}
+	if _, errExecute := manager.Execute(context.Background(), []string{"antigravity"}, req, opts); errExecute != nil {
+		t.Fatalf("execute error = %v, want success", errExecute)
+	}
+
+	payloads := executor.ExecutePayloads()
+	if len(payloads) != 2 {
+		t.Fatalf("execute payloads = %v, want primary and credits attempts", payloads)
+	}
+	for i, payload := range payloads {
+		if !strings.Contains(payload, `"messages"`) || strings.Contains(payload, `"prompt"`) {
+			t.Fatalf("attempt %d payload = %s, want chat messages", i, payload)
+		}
 	}
 }
 

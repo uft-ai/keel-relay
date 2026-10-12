@@ -366,8 +366,6 @@ type homeDispatchModelInfo struct {
 	NativeCapabilities         *registry.NativeCapabilities `json:"native_capabilities,omitempty"`
 	SupportConfigurationUpdate *bool                        `json:"support_configuration_update,omitempty"`
 	UserDefined                bool                         `json:"user_defined"`
-	Operations                 []string                     `json:"operations,omitempty"`
-	Native                     []string                     `json:"native,omitempty"`
 }
 
 func (m *homeDispatchModelInfo) registryModelInfo() *registry.ModelInfo {
@@ -385,17 +383,7 @@ func (m *homeDispatchModelInfo) registryModelInfo() *registry.ModelInfo {
 		NativeCapabilities:         m.NativeCapabilities,
 		SupportConfigurationUpdate: m.SupportConfigurationUpdate != nil && *m.SupportConfigurationUpdate,
 		UserDefined:                m.UserDefined,
-		Operations:                 cloneOptionalStrings(m.Operations),
-		Native:                     cloneOptionalStrings(m.Native),
 	}
-}
-
-// cloneOptionalStrings keeps nil (unset) distinct from a present list.
-func cloneOptionalStrings(values []string) []string {
-	if values == nil {
-		return nil
-	}
-	return append([]string{}, values...)
 }
 
 type homeDispatchSessionHierarchyDispatcher interface {
@@ -1433,9 +1421,10 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 			resultModel := m.stateModelForExecution(c.auth, routeModel, upstreamModel, pooled)
 			execReq := req
 			execReq.Model = upstreamModel
-			creditsCtx = syncMetadataSessionToContext(creditsCtx, creditsOpts.Metadata)
-			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)
-			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: creditsOpts, CredentialVersion: c.auth.CredentialVersion, RegistrationEpoch: c.auth.RegistrationEpoch}
+			execReq, execOpts := prepareCompletionsExecution(execReq, creditsOpts)
+			creditsCtx = syncMetadataSessionToContext(creditsCtx, execOpts.Metadata)
+			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, execOpts)
+			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: execOpts, CredentialVersion: c.auth.CredentialVersion, RegistrationEpoch: c.auth.RegistrationEpoch}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {

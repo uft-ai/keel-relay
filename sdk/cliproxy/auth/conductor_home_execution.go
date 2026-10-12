@@ -203,6 +203,12 @@ func (m *Manager) executeHomeOnce(ctx context.Context, providers []string, req c
 			if !restoreExecutionModel {
 				execReq = attachResolvedHomeModelInfo(execReq, preparedAuth, routeModel, selection.modelInfo, selection.configurationUpdateSupport)
 			}
+			if errOperation := checkModelOperation(execReq, execOpts); errOperation != nil {
+				releaseAttempt()
+				selection.End("unsupported_operation")
+				return cliproxyexecutor.Response{}, errOperation
+			}
+			execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 			if errCtx := execCtx.Err(); errCtx != nil {
 				releaseAttempt()
 				selection.End("attempt_canceled")

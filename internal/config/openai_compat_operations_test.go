@@ -49,23 +49,36 @@ func TestValidateOpenAICompatModels(t *testing.T) {
 				{Name: "a", Alias: "pool"},
 				{Name: "b", Alias: "pool", MaxOutputTokens: 8192},
 			},
-			wantErr: "must declare identical image, max-output-tokens",
+			wantErr: "must declare identical operations, native and max-output-tokens",
 		},
 		{
-			name: "shared alias image and chat with metadata",
+			name: "shared alias image flag is left to the image fence",
 			models: []OpenAICompatibilityModel{
 				{Name: "a", Alias: "pool", MaxOutputTokens: 4096},
 				{Name: "b", Alias: "pool", Image: true, MaxOutputTokens: 4096},
 			},
-			wantErr: "must declare identical image, max-output-tokens",
 		},
 		{
-			name: "shared alias modalities differ with metadata",
+			name: "shared alias modalities may differ",
 			models: []OpenAICompatibilityModel{
 				{Name: "a", Alias: "pool", Operations: []string{"chat"}, InputModalities: []string{"text"}},
 				{Name: "b", Alias: "pool", Operations: []string{"chat"}, InputModalities: []string{"text", "image"}},
 			},
-			wantErr: "must declare identical image, max-output-tokens",
+		},
+		{
+			name: "shared alias targets may spell max tokens differently",
+			models: []OpenAICompatibilityModel{
+				{Name: "a", Alias: "pool", Operations: []string{"chat"}, MaxOutputTokens: 4096},
+				{Name: "b", Alias: "pool", Operations: []string{"chat"}, MaxOutputTokens: 4096, UseMaxCompletionTokens: true},
+			},
+		},
+		{
+			name: "shared alias native differs",
+			models: []OpenAICompatibilityModel{
+				{Name: "a", Alias: "pool", Operations: []string{"chat", "responses"}},
+				{Name: "b", Alias: "pool", Operations: []string{"chat", "responses"}, Native: []string{"responses"}},
+			},
+			wantErr: "must declare identical operations and native lists",
 		},
 		{
 			name:   "legacy pool with differing image flag is unchanged",

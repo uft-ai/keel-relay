@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"slices"
 	"testing"
 
@@ -12,14 +11,14 @@ import (
 func operationsTestAuth() *Auth {
 	return &Auth{
 		ID:       "auth-nan",
-		Provider: "openai-compatibility:nan",
+		Provider: "openai-compatible-nan",
 		Prefix:   "nan",
 		Attributes: map[string]string{
 			AttributeAuthKind: AuthKindAPIKey,
 			AttributeAPIKey:   "key-nan",
 			AttributeSource:   "config:nan[0]",
 			"compat_name":     "nan",
-			"provider_key":    "openai-compatibility:nan",
+			"provider_key":    "nan",
 		},
 	}
 }
@@ -107,39 +106,5 @@ func TestAttachResolvedAPIKeyModelOperationsKeepsLegacyEntryUnrestricted(t *test
 	operations, _, _ = ResolvedAPIKeyModelOperations(req)
 	if !slices.Equal(operations, []string{"rerank"}) {
 		t.Fatalf("rerank operations = %#v, want [rerank]", operations)
-	}
-}
-
-func TestHomeDispatchModelInfoCarriesOperationLists(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		raw        string
-		operations []string
-		native     []string
-	}{
-		{name: "legacy", raw: `{"id":"qwen3.6","user_defined":true}`},
-		{name: "native", raw: `{"id":"qwen3.6","user_defined":true,"operations":["chat","responses"],"native":["responses"]}`, operations: []string{"chat", "responses"}, native: []string{"responses"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var wire homeDispatchModelInfo
-			if err := json.Unmarshal([]byte(tc.raw), &wire); err != nil {
-				t.Fatal(err)
-			}
-			info := wire.registryModelInfo()
-			if !slices.Equal(info.Operations, tc.operations) || (info.Operations == nil) != (tc.operations == nil) {
-				t.Fatalf("operations = %#v, want %#v", info.Operations, tc.operations)
-			}
-			if !slices.Equal(info.Native, tc.native) || (info.Native == nil) != (tc.native == nil) {
-				t.Fatalf("native = %#v, want %#v", info.Native, tc.native)
-			}
-			encoded, err := json.Marshal(wire)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var back homeDispatchModelInfo
-			if err := json.Unmarshal(encoded, &back); err != nil || !slices.Equal(back.Native, wire.Native) {
-				t.Fatalf("round trip = %s (%v)", encoded, err)
-			}
-		})
 	}
 }

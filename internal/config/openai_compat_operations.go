@@ -49,6 +49,12 @@ func (m OpenAICompatibilityModel) AllowsOperation(op string) bool {
 	return slices.Contains(m.Operations, op)
 }
 
+// HasDispatchMetadata reports whether the entry sets operations or native.
+// Home dispatch does not implement these fields, so callers reject them there.
+func (m OpenAICompatibilityModel) HasDispatchMetadata() bool {
+	return m.Operations != nil || m.Native != nil
+}
+
 // IsNative reports whether op is forwarded natively for this entry.
 func (m OpenAICompatibilityModel) IsNative(op string) bool {
 	return slices.Contains(m.Native, op)
@@ -212,7 +218,7 @@ func ValidateOpenAICompatModels(models []OpenAICompatibilityModel) error {
 			return fmt.Errorf("%s: entries sharing alias %q must declare identical operations and native lists (see models[%d])", field, alias, first)
 		}
 		if (hasOpenAICompatOperationMetadata(models[first]) || hasOpenAICompatOperationMetadata(model)) && !sameRoutingMetadata(models[first], model) {
-			return fmt.Errorf("%s: entries sharing alias %q must declare identical image, max-output-tokens, modalities and use-max-completion-tokens (see models[%d])", field, alias, first)
+			return fmt.Errorf("%s: entries sharing alias %q must declare identical operations, native and max-output-tokens (see models[%d])", field, alias, first)
 		}
 	}
 	return nil
@@ -222,19 +228,11 @@ func sameOperationMetadata(a, b OpenAICompatibilityModel) bool {
 	return sameOperationList(a.Operations, b.Operations) && sameOperationList(a.Native, b.Native)
 }
 
-// sameRoutingMetadata compares the fields the catalog publishes once per alias.
+// sameRoutingMetadata compares the contract a client alias advertises: operations, native
+// protocols and output limit. Per-target payload spelling (use-max-completion-tokens) and the
+// image/modality fields keep their existing per-entry behavior.
 func sameRoutingMetadata(a, b OpenAICompatibilityModel) bool {
-	return sameOperationMetadata(a, b) &&
-		a.Image == b.Image &&
-		a.MaxOutputTokens == b.MaxOutputTokens &&
-		a.UseMaxCompletionTokens == b.UseMaxCompletionTokens &&
-		sameFoldedSet(a.InputModalities, b.InputModalities) &&
-		sameFoldedSet(a.OutputModalities, b.OutputModalities)
-}
-
-func sameFoldedSet(a, b []string) bool {
-	return sameOperationList(normalizeOperationList(a), normalizeOperationList(b)) ||
-		(len(a) == 0 && len(b) == 0)
+	return sameOperationMetadata(a, b) && a.MaxOutputTokens == b.MaxOutputTokens
 }
 
 func sameOperationList(a, b []string) bool {

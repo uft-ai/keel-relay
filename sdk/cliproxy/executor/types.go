@@ -15,6 +15,11 @@ const RequestedModelMetadataKey = "requested_model"
 // It is optional and may be absent for non-HTTP executions.
 const RequestPathMetadataKey = "request_path"
 
+// RequestedOperationMetadataKey optionally names the model operation a request performs
+// (for example "embeddings" or "rerank"). When absent the operation is derived from the
+// source format, alt and request path.
+const RequestedOperationMetadataKey = "requested_operation"
+
 // DisallowFreeAuthMetadataKey instructs auth selection to skip known free-tier credentials.
 const DisallowFreeAuthMetadataKey = "disallow_free_auth"
 

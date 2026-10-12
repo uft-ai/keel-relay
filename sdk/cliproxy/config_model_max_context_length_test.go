@@ -112,7 +112,9 @@ func TestBuildOpenAICompatibilityConfigModelsCarriesOperationMetadata(t *testing
 	if models[2].MaxCompletionTokens != 8192 {
 		t.Fatalf("max completion tokens = %d, want 8192", models[2].MaxCompletionTokens)
 	}
-	if models[0].Native != nil || len(models[2].Native) != 1 || models[2].Native[0] != "responses" {
-		t.Fatalf("native = %v / %v, want nil / [responses]", models[0].Native, models[2].Native)
+	for _, model := range models {
+		if model.Native != nil {
+			t.Fatalf("catalog model %s carries native %v; native is per-attempt only", model.ID, model.Native)
+		}
 	}
 }

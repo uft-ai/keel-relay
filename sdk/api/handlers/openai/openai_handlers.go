@@ -192,78 +192,6 @@ func (h *OpenAIAPIHandler) Completions(c *gin.Context) {
 
 }
 
-// convertCompletionsRequestToChatCompletions converts OpenAI completions API request to chat completions format.
-// This allows the completions endpoint to use the existing chat completions infrastructure.
-//
-// Parameters:
-//   - rawJSON: The raw JSON bytes of the completions request
-//
-// Returns:
-//   - []byte: The converted chat completions request
-func convertCompletionsRequestToChatCompletions(rawJSON []byte) []byte {
-	root := gjson.ParseBytes(rawJSON)
-
-	// Extract prompt from completions request
-	prompt := root.Get("prompt").String()
-	if prompt == "" {
-		prompt = "Complete this:"
-	}
-
-	// Create chat completions structure
-	out := []byte(`{"model":"","messages":[{"role":"user","content":""}]}`)
-
-	// Set model
-	if model := root.Get("model"); model.Exists() {
-		out, _ = sjson.SetBytes(out, "model", model.String())
-	}
-
-	// Set the prompt as user message content
-	out, _ = sjson.SetBytes(out, "messages.0.content", prompt)
-
-	// Copy other parameters from completions to chat completions
-	if maxTokens := root.Get("max_tokens"); maxTokens.Exists() {
-		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
-	}
-
-	if temperature := root.Get("temperature"); temperature.Exists() {
-		out, _ = sjson.SetBytes(out, "temperature", temperature.Float())
-	}
-
-	if topP := root.Get("top_p"); topP.Exists() {
-		out, _ = sjson.SetBytes(out, "top_p", topP.Float())
-	}
-
-	if frequencyPenalty := root.Get("frequency_penalty"); frequencyPenalty.Exists() {
-		out, _ = sjson.SetBytes(out, "frequency_penalty", frequencyPenalty.Float())
-	}
-
-	if presencePenalty := root.Get("presence_penalty"); presencePenalty.Exists() {
-		out, _ = sjson.SetBytes(out, "presence_penalty", presencePenalty.Float())
-	}
-
-	if stop := root.Get("stop"); stop.Exists() {
-		out, _ = sjson.SetRawBytes(out, "stop", []byte(stop.Raw))
-	}
-
-	if stream := root.Get("stream"); stream.Exists() {
-		out, _ = sjson.SetBytes(out, "stream", stream.Bool())
-	}
-
-	if logprobs := root.Get("logprobs"); logprobs.Exists() {
-		out, _ = sjson.SetBytes(out, "logprobs", logprobs.Bool())
-	}
-
-	if topLogprobs := root.Get("top_logprobs"); topLogprobs.Exists() {
-		out, _ = sjson.SetBytes(out, "top_logprobs", topLogprobs.Int())
-	}
-
-	if echo := root.Get("echo"); echo.Exists() {
-		out, _ = sjson.SetBytes(out, "echo", echo.Bool())
-	}
-
-	return out
-}
-
 // convertChatCompletionsResponseToCompletions converts chat completions API response back to completions format.
 // This ensures the completions endpoint returns data in the expected format.
 //
@@ -274,6 +202,9 @@ func convertCompletionsRequestToChatCompletions(rawJSON []byte) []byte {
 //   - []byte: The converted completions response
 func convertChatCompletionsResponseToCompletions(rawJSON []byte) []byte {
 	root := gjson.ParseBytes(rawJSON)
+	if root.Get("object").String() == "text_completion" {
+		return rawJSON
+	}
 
 	// Base completions response structure
 	out := []byte(`{"id":"","object":"text_completion","created":0,"model":"","choices":[]}`)
@@ -348,6 +279,9 @@ func convertChatCompletionsResponseToCompletions(rawJSON []byte) []byte {
 //   - []byte: The converted completions stream chunk, or nil if should be filtered out
 func convertChatCompletionsStreamChunkToCompletions(chunkData []byte) []byte {
 	root := gjson.ParseBytes(chunkData)
+	if root.Get("object").String() == "text_completion" {
+		return chunkData
+	}
 
 	// Check if this chunk has any meaningful content
 	hasContent := false
@@ -600,13 +534,11 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 func (h *OpenAIAPIHandler) handleCompletionsNonStreamingResponse(c *gin.Context, rawJSON []byte) {
 	c.Header("Content-Type", "application/json")
 
-	// Convert completions request to chat completions format
-	chatCompletionsJSON := convertCompletionsRequestToChatCompletions(rawJSON)
-
-	modelName := gjson.GetBytes(chatCompletionsJSON, "model").String()
+	// Keep the native body until credential selection decides the upstream operation.
+	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
-	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, chatCompletionsJSON, "")
+	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
 	stopKeepAlive()
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
@@ -639,10 +571,8 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 		return
 	}
 
-	// Convert completions request to chat completions format
-	chatCompletionsJSON := convertCompletionsRequestToChatCompletions(rawJSON)
-
-	modelName := gjson.GetBytes(chatCompletionsJSON, "model").String()
+	// Keep the native body until credential selection decides the upstream operation.
+	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	setSSEHeaders := func() {
 		c.Header("Content-Type", "text/event-stream")
@@ -670,7 +600,7 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 	defer stopKeepAlive()
 
 	dataChan, resolvedHeaders, errChan, okBootstrap := h.ExecuteStreamWithPreFTKeepAlive(
-		c, cliCtx, func(err error) { cliCancel(err) }, h.HandlerType(), modelName, chatCompletionsJSON, "", keepAliveC, writeKeepAlive,
+		c, cliCtx, func(err error) { cliCancel(err) }, h.HandlerType(), modelName, rawJSON, "", keepAliveC, writeKeepAlive,
 	)
 	if !okBootstrap {
 		return

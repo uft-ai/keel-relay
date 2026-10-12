@@ -251,6 +251,10 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			return nil, errIntercept
 		}
 		execReq = attachResolvedExecutionModelInfo(routing, execReq, auth, routeModel, execModel, executionModel != "")
+		if errOperation := checkOperationDispatch(ctx, execReq, execOpts); errOperation != nil {
+			return nil, errOperation
+		}
+		execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 		if errCtx := ctx.Err(); errCtx != nil {
 			return nil, errCtx
 		}

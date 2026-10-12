@@ -90,6 +90,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
 	}
+	if openAICompatNativeResponsesRequested(req, opts) || openAICompatNativeCompletionsRequested(req, opts) {
+		return e.executeNative(ctx, auth, req, opts)
+	}
 
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
@@ -321,6 +324,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImagesStream(ctx, auth, req, opts, endpointPath)
+	}
+	if openAICompatNativeResponsesRequested(req, opts) || openAICompatNativeCompletionsRequested(req, opts) {
+		return e.executeNativeStream(ctx, auth, req, opts)
 	}
 
 	baseModel := thinking.ParseSuffix(req.Model).ModelName

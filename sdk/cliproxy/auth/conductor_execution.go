@@ -122,6 +122,7 @@ func preferredExecutionAttemptError(fallback, upstream error) error {
 func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	ctx = cliproxyexecutor.WithRequestProxyURL(ctx, opts.ProxyURL)
 	req, opts = cliproxysession.Enrich(req, opts)
+	ctx = m.withOperationDispatch(ctx, req, opts)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -182,6 +183,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	ctx = cliproxyexecutor.WithRequestProxyURL(ctx, opts.ProxyURL)
 	req, opts = cliproxysession.Enrich(req, opts)
+	ctx = m.withOperationDispatch(ctx, req, opts)
 	normalized := m.normalizeProviders(providers)
 	if len(normalized) == 0 {
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
@@ -235,6 +237,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	ctx = cliproxyexecutor.WithRequestProxyURL(ctx, opts.ProxyURL)
 	req, opts = cliproxysession.Enrich(req, opts)
+	ctx = m.withOperationDispatch(ctx, req, opts)
 	if m.HomeEnabled() {
 		if unlockSession := m.lockHomeWebsocketSession(ctx, opts); unlockSession != nil {
 			defer unlockSession()
@@ -516,7 +519,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if shouldReturnLastErrorOnPickFailure(homeMode, lastErr, errPick) {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
 			}
-			return cliproxyexecutor.Response{}, errPick
+			return cliproxyexecutor.Response{}, operationSelectionError(ctx, errPick)
 		}
 
 		entry := logEntryWithRequestID(ctx)
@@ -590,6 +593,10 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				return cliproxyexecutor.Response{}, errIntercept
 			}
 			execReq = attachResolvedExecutionModelInfo(routing, execReq, auth, routeModel, upstreamModel, restoreExecutionModel)
+			if errOperation := checkOperationDispatch(execCtx, execReq, execOpts); errOperation != nil {
+				return cliproxyexecutor.Response{}, errOperation
+			}
+			execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
 			resp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)
@@ -728,7 +735,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if shouldReturnLastErrorOnPickFailure(homeMode, lastErr, errPick) {
 				return cliproxyexecutor.Response{}, preferredExecutionAttemptError(lastErr, upstreamErr)
 			}
-			return cliproxyexecutor.Response{}, errPick
+			return cliproxyexecutor.Response{}, operationSelectionError(ctx, errPick)
 		}
 
 		entry := logEntryWithRequestID(ctx)
@@ -802,6 +809,10 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				return cliproxyexecutor.Response{}, errIntercept
 			}
 			execReq = attachResolvedExecutionModelInfo(routing, execReq, auth, routeModel, upstreamModel, restoreExecutionModel)
+			if errOperation := checkOperationDispatch(execCtx, execReq, execOpts); errOperation != nil {
+				return cliproxyexecutor.Response{}, errOperation
+			}
+			execReq, execOpts = prepareCompletionsExecution(execReq, execOpts)
 			execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
 			startExec := time.Now()
 			resp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)
@@ -979,7 +990,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 				}
 				return nil, preferredErr
 			}
-			return nil, errPick
+			return nil, operationSelectionError(ctx, errPick)
 		}
 		if auth == nil || executor == nil {
 			if selection != nil {

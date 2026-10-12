@@ -16,7 +16,18 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
+	"github.com/tidwall/gjson"
 )
+
+func TestPluginCompletionsRetainLegacyChatInput(t *testing.T) {
+	h := &BaseAPIHandler{}
+	req, opts := h.pluginExecutorRequest(t.Context(), "openai", "openai", "qwen", "nan/qwen",
+		[]byte(`{"model":"nan/qwen","prompt":"legacy prompt","max_tokens":32}`), "", false,
+		modelExecutionOptions{Path: "/v1/completions"})
+	if gjson.GetBytes(req.Payload, "messages.0.content").String() != "legacy prompt" || string(req.Payload) != string(opts.OriginalRequest) {
+		t.Fatalf("plugin no longer receives chat input: %s", req.Payload)
+	}
+}
 
 type handlerModelRouterTestHost struct {
 	hasRouters bool

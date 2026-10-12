@@ -821,9 +821,6 @@ func buildOpenAICompatibilityConfigModels(compat *config.OpenAICompatibility) []
 		if model.Operations != nil {
 			info.Operations = append([]string{}, model.Operations...)
 		}
-		if model.Native != nil {
-			info.Native = append([]string{}, model.Native...)
-		}
 		models = append(models, info)
 	}
 	return models
