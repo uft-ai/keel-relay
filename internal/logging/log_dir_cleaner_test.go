@@ -173,3 +173,74 @@ func TestErrorLogCountCleanerProtectsActiveFinalization(t *testing.T) {
 		t.Fatalf("closed error capture was not removed: %v", err)
 	}
 }
+
+func TestActiveRequestIdentityUsesAbsolutePaths(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, path, err := createUniqueLogFile(relative, "v1-chat-2026-10-12T000000-cafebabe.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsRequestLogActive(absolute) {
+		t.Fatal("management lookup cannot identify an active relative capture")
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if IsRequestLogActive(absolute) {
+		t.Fatal("closed capture remains pending")
+	}
+}
+
+func TestStartupCleanupOnlyRemovesRecognizedEarlierSpools(t *testing.T) {
+	dir := t.TempDir()
+	started := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	old := started.Add(-time.Hour)
+	oldFile := filepath.Join(dir, "response-body-123.tmp")
+	freshFile := filepath.Join(dir, "request-body-456.tmp")
+	unrelated := filepath.Join(dir, "unrelated-123.tmp")
+	completed := filepath.Join(dir, "v1-chat-2026-10-11T000000-cafebabe.log")
+	for _, path := range []string{oldFile, unrelated, completed} {
+		writeLogFile(t, path, 16, old)
+	}
+	writeLogFile(t, freshFile, 16, started.Add(time.Second))
+	parts := filepath.Join(dir, "request-log-parts-api-request-789")
+	if err := os.Mkdir(parts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeLogFile(t, filepath.Join(parts, "part-123.tmp"), 16, old)
+	if err := os.Chtimes(parts, old, old); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "request-body-789.tmp")
+	if err := os.Symlink(unrelated, link); err != nil {
+		t.Fatal(err)
+	}
+	logger := &FileRequestLogger{logsDir: dir}
+	removed, err := logger.CleanupOrphanSpools(started)
+	if err != nil || removed != 2 {
+		t.Fatalf("orphan cleanup removed=%d err=%v", removed, err)
+	}
+	for _, path := range []string{freshFile, unrelated, completed, link} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("protected file removed: %s", path)
+		}
+	}
+	for _, path := range []string{oldFile, parts} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("orphan remains: %s", path)
+		}
+	}
+}

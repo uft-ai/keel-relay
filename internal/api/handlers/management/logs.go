@@ -368,6 +368,10 @@ func (h *Handler) GetRequestLogByID(c *gin.Context) {
 		return
 	}
 
+	if c.GetBool(ConfigV8ContextKey) && logging.IsRequestLogActive(fullPath) {
+		c.JSON(http.StatusConflict, gin.H{"error": "capture_pending"})
+		return
+	}
 	c.FileAttachment(fullPath, matchedFile)
 }
 

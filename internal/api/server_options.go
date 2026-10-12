@@ -11,6 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 type serverOptionConfig struct {
@@ -32,10 +33,17 @@ type serverOptionConfig struct {
 // ServerOption customises HTTP server construction.
 type ServerOption func(*serverOptionConfig)
 
+var requestLogProcessStarted = time.Now()
+
 func defaultRequestLoggerFactory(cfg *config.Config, configPath string) logging.RequestLogger {
 	configDir := filepath.Dir(configPath)
 	logsDir := logging.ResolveLogDirectory(cfg)
 	logger := logging.NewFileRequestLogger(cfg.RequestLog, logsDir, configDir, cfg.ErrorLogsMaxFiles)
+	if cfg.RequestLogMaxAgeHours > 0 {
+		if _, err := logger.CleanupOrphanSpools(requestLogProcessStarted); err != nil {
+			log.WithError(err).Warn("failed to remove orphan request capture spools")
+		}
+	}
 	logger.SetHomeEnabled(cfg != nil && cfg.Home.Enabled)
 	return logger
 }

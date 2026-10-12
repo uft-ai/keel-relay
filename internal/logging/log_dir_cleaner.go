@@ -32,7 +32,7 @@ func openRequestLogFile(path string) (*requestLogFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	activeRequestLogs.paths[filepath.Clean(path)] = struct{}{}
+	activeRequestLogs.paths[requestLogPath(path)] = struct{}{}
 	return &requestLogFile{File: file}, nil
 }
 
@@ -40,14 +40,14 @@ func (file *requestLogFile) Close() error {
 	activeRequestLogs.Lock()
 	defer activeRequestLogs.Unlock()
 	err := file.File.Close()
-	delete(activeRequestLogs.paths, filepath.Clean(file.Name()))
+	delete(activeRequestLogs.paths, requestLogPath(file.Name()))
 	return err
 }
 
 func removeInactiveLog(path string) (bool, error) {
 	activeRequestLogs.Lock()
 	defer activeRequestLogs.Unlock()
-	if _, active := activeRequestLogs.paths[filepath.Clean(path)]; active {
+	if _, active := activeRequestLogs.paths[requestLogPath(path)]; active {
 		return false, nil
 	}
 	if err := os.Remove(path); err != nil {
@@ -57,6 +57,53 @@ func removeInactiveLog(path string) (bool, error) {
 }
 
 var completedRequestLogName = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}T\d{6}(?:_\d+)?-[A-Za-z0-9_-]+\.log(?:\.gz)?$`)
+
+var orphanSpoolName = regexp.MustCompile(`^(?:(?:request|response)-body-[0-9]+\.tmp|request-log-parts-(?:request-body|api-request|api-response|websocket-timeline|api-websocket-timeline)-[0-9]+)$`)
+
+// IsRequestLogActive distinguishes a completed capture from a file still being assembled.
+func IsRequestLogActive(path string) bool {
+	activeRequestLogs.Lock()
+	defer activeRequestLogs.Unlock()
+	_, active := activeRequestLogs.paths[requestLogPath(path)]
+	return active
+}
+
+func requestLogPath(path string) string {
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return filepath.Clean(path)
+}
+
+// CleanupOrphanSpools runs before serving requests in a private single-instance log directory.
+// The process-start cutoff leaves every spool created by this process untouched.
+func (logger *FileRequestLogger) CleanupOrphanSpools(processStarted time.Time) (int, error) {
+	entries, err := os.ReadDir(logger.logsDir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		if !orphanSpoolName.MatchString(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(processStarted) {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), "request-log-parts-") != info.IsDir() || (!info.IsDir() && !info.Mode().IsRegular()) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(logger.logsDir, entry.Name())); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
+}
 
 func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB, maxAgeHours int, protectedPath string) {
 	stopLogDirCleanerLocked()
