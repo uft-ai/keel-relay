@@ -65,6 +65,7 @@ func TestIsAIAPIPathIncludesPublicAPIGroups(t *testing.T) {
 	for _, path := range []string{
 		"/v1",
 		"/v1/models",
+		"/v2/rerank",
 		"/v1/alpha/search",
 		"/v1beta/interactions",
 		"/openai/v1/videos",

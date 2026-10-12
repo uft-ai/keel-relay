@@ -714,3 +714,21 @@ func TestRequestLoggingMiddleware_StreamingPreservesFullUUIDForLogger(t *testing
 		t.Fatalf("streaming request ID version = %d, want 7", parsed.Version())
 	}
 }
+
+func TestUsageHistoryGETIsCaptured(t *testing.T) {
+	dir := t.TempDir()
+	logger := logging.NewFileRequestLogger(true, dir, "", 0)
+	router := gin.New()
+	router.Use(logging.GinLogrusLogger(), RequestLoggingMiddleware(logger))
+	router.GET("/v1/usage", func(c *gin.Context) { c.Data(200, "application/json", []byte(`{"object":"usage.report","data":[]}`)) })
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/usage?limit=1", nil))
+	files, err := filepath.Glob(filepath.Join(dir, "*.log"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("history capture files: %v %v", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil || !bytes.Contains(data, []byte("usage.report")) || !bytes.Contains(data, []byte("/v1/usage?limit=1")) {
+		t.Fatalf("history query/response missing: %v", err)
+	}
+}

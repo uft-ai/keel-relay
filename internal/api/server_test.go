@@ -1940,6 +1940,15 @@ func TestExampleAPIKeySafeModeShowsWarningAndKeepsManagement(t *testing.T) {
 		}
 	})
 
+	t.Run("v2 rerank is blocked by example key safe mode", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v2/rerank", strings.NewReader(`{"model":"nan/rerank"}`))
+		rr := httptest.NewRecorder()
+		server.engine.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "unsafe_example_api_key") {
+			t.Fatalf("v2 safe mode status=%d body=%s", rr.Code, rr.Body.String())
+		}
+	})
+
 	t.Run("safe mode clears after key update", func(t *testing.T) {
 		nextCfg := cfg
 		nextCfg.APIKeys = []string{"real-key"}

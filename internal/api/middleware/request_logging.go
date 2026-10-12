@@ -282,6 +282,9 @@ func shouldSkipMethodForRequestLogging(req *http.Request) bool {
 	if req.Method != http.MethodGet {
 		return false
 	}
+	if req.URL != nil && req.URL.Path == "/v1/usage" {
+		return false
+	}
 	return !isResponsesWebsocketUpgrade(req)
 }
 
