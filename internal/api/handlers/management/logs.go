@@ -300,12 +300,28 @@ func (h *Handler) GetRequestLogByID(c *gin.Context) {
 	suffix := "-" + logging.ShortRequestID(requestID) + ".log"
 	var matchedFile string
 	var latestModTime time.Time
+	matchedExact := false
+	verifyIdentity := c.GetBool(ConfigV8ContextKey) && len(requestID) > 8
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		if strings.HasSuffix(name, suffix) {
+			exact := false
+			if verifyIdentity {
+				if entry.Type()&os.ModeSymlink != 0 {
+					continue
+				}
+				identity, errRead := capturedRequestIdentity(filepath.Join(dir, name))
+				if errRead != nil || (identity != "" && identity != requestID) {
+					continue
+				}
+				exact = identity == requestID
+				if matchedExact && !exact {
+					continue
+				}
+			}
 			info, errInfo := entry.Info()
 			if errInfo != nil {
 				if matchedFile == "" {
@@ -313,9 +329,10 @@ func (h *Handler) GetRequestLogByID(c *gin.Context) {
 				}
 				continue
 			}
-			if matchedFile == "" || logFileIsNewer(name, info.ModTime(), matchedFile, latestModTime) {
+			if matchedFile == "" || (exact && !matchedExact) || logFileIsNewer(name, info.ModTime(), matchedFile, latestModTime) {
 				matchedFile = name
 				latestModTime = info.ModTime()
+				matchedExact = exact
 			}
 		}
 	}
@@ -352,6 +369,28 @@ func (h *Handler) GetRequestLogByID(c *gin.Context) {
 	}
 
 	c.FileAttachment(fullPath, matchedFile)
+}
+
+func capturedRequestIdentity(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(io.LimitReader(file, 4096))
+	if !scanner.Scan() || scanner.Text() != "=== REQUEST INFO ===" {
+		return "", scanner.Err()
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || strings.HasPrefix(line, "===") {
+			break
+		}
+		if id, found := strings.CutPrefix(line, "Request ID: "); found {
+			return strings.TrimSpace(id), nil
+		}
+	}
+	return "", scanner.Err()
 }
 
 type logFileMeta struct {

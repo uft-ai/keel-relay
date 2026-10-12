@@ -3,6 +3,7 @@ package management
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -953,5 +954,36 @@ func TestGetRequestLogByID_MatchesFullUUIDAndShortID(t *testing.T) {
 	}
 	if body := recFull.Body.String(); body != "uuid v7 request log content" {
 		t.Fatalf("body = %q, want %q", body, "uuid v7 request log content")
+	}
+}
+
+func TestV8RequestLogIdentityOutranksNewerShortSuffixCollision(t *testing.T) {
+	dir := t.TempDir()
+	h := newLogsTestHandler(dir, true)
+	const wanted = "018f3a5b-1234-7abc-def0-00001234abcd"
+	const other = "018f3a5b-4321-7abc-def0-00001234abcd"
+	for i, id := range []string{wanted, other, ""} {
+		path := filepath.Join(dir, fmt.Sprintf("v1-chat-2026-10-12T00000%d-1234abcd.log", i))
+		body := "=== REQUEST INFO ===\nVersion: test\n"
+		if id != "" {
+			body += "Request ID: " + id + "\n"
+		}
+		body += "\n=== REQUEST BODY ===\nRequest ID: " + wanted + "\n"
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		timestamp := time.Date(2026, 10, 12, 0, 0, i, 0, time.UTC)
+		if err := os.Chtimes(path, timestamp, timestamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set(ConfigV8ContextKey, true)
+	c.Params = gin.Params{{Key: "id", Value: wanted}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/v8/management/observability/logs/requests/"+wanted, nil)
+	h.GetRequestLogByID(c)
+	if recorder.Code != 200 || !strings.Contains(recorder.Header().Get("Content-Disposition"), "T000000-") {
+		t.Fatalf("incorrect collision selected: status=%d header=%s", recorder.Code, recorder.Header().Get("Content-Disposition"))
 	}
 }
