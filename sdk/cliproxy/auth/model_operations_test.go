@@ -73,6 +73,23 @@ func TestOperationSelectionSkipsIneligibleHigherPriorityCredential(t *testing.T)
 	}
 }
 
+func TestUtilityOperationDoesNotFallThroughToChatExecutor(t *testing.T) {
+	for _, operation := range []string{"embeddings", "rerank"} {
+		t.Run(operation, func(t *testing.T) {
+			model := internalconfig.OpenAICompatibilityModel{Name: "utility", Alias: "shared", Operations: []string{operation}}
+			m, executor, _ := operationPool(t, model, model)
+			_, err := m.Execute(t.Context(), []string{executor.provider}, cliproxyexecutor.Request{Model: "nan/shared"}, cliproxyexecutor.Options{SourceFormat: sdktranslator.Format("openai-" + operation)})
+			if !IsUnsupportedOperationError(err) || len(executor.requests) != 0 {
+				t.Fatalf("utility fell through to chat: %v, %d requests", err, len(executor.requests))
+			}
+			stored, _ := m.GetByID("high")
+			if stored.LastError != nil || len(stored.ModelStates) > 0 {
+				t.Fatal("unsupported executor changed credential state")
+			}
+		})
+	}
+}
+
 func TestCompletionsConversionFollowsSelectedModelAndInterceptor(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy_chat", true: "native"}[native], func(t *testing.T) {

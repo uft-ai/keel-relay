@@ -87,6 +87,12 @@ func (e *OpenAICompatExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 
 func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
+	switch opts.SourceFormat {
+	case "openai-embeddings":
+		return e.ExecuteEmbeddings(ctx, auth, req, opts)
+	case "openai-rerank":
+		return e.ExecuteRerank(ctx, auth, req, opts)
+	}
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
 	}

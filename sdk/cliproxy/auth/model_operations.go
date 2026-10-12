@@ -27,6 +27,7 @@ type operationDispatchState struct {
 	rejected  bool
 	ledger    *PeriodLedger
 	blocked   *periodExhaustedError
+	providers map[string]bool
 }
 
 func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) context.Context {
@@ -36,8 +37,28 @@ func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecuto
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	operation := RequestedModelOperation(opts)
+	var providers map[string]bool
+	if opts.SourceFormat == "openai-embeddings" || opts.SourceFormat == "openai-rerank" {
+		providers = make(map[string]bool)
+		m.mu.RLock()
+		for provider, executor := range m.executors {
+			switch operation {
+			case internalconfig.OpenAICompatOperationEmbeddings:
+				_, providers[provider] = executor.(interface {
+					ExecuteEmbeddings(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
+				})
+			case internalconfig.OpenAICompatOperationRerank:
+				_, providers[provider] = executor.(interface {
+					ExecuteRerank(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
+				})
+			}
+		}
+		m.mu.RUnlock()
+	}
 	return context.WithValue(ctx, operationDispatchContextKey{}, &operationDispatchState{
-		routing: m.loadAPIKeyModelRouting(), model: authSelectionModelFromOptions(opts, req.Model), operation: RequestedModelOperation(opts), ledger: m.PeriodLedger(),
+		routing: m.loadAPIKeyModelRouting(), model: authSelectionModelFromOptions(opts, req.Model), operation: operation,
+		ledger: m.PeriodLedger(), providers: providers,
 	})
 }
 
@@ -65,6 +86,10 @@ func (s *operationDispatchState) allows(auth *Auth) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.providers != nil && !s.providers[strings.ToLower(strings.TrimSpace(auth.Provider))] {
+		s.rejected = true
+		return false
+	}
 	byRoute := s.routing.capabilities[auth.ID]
 	_, candidates := modelAliasLookupCandidates(rewriteModelForAuth(s.model, auth))
 	found := false
@@ -208,6 +233,10 @@ func RequestedModelOperation(opts cliproxyexecutor.Options) string {
 		}
 	}
 	switch opts.SourceFormat.String() {
+	case "openai-embeddings":
+		return internalconfig.OpenAICompatOperationEmbeddings
+	case "openai-rerank":
+		return internalconfig.OpenAICompatOperationRerank
 	case openAIImageSourceFormat:
 		if strings.HasSuffix(path, "/images/edits") {
 			return internalconfig.OpenAICompatOperationImageEdit
@@ -241,6 +270,9 @@ func prepareCompletionsExecution(req cliproxyexecutor.Request, opts cliproxyexec
 // checkModelOperation enforces the bound model entry's operations list for one attempt.
 // Entries without an operations list keep legacy behavior and always pass.
 func checkModelOperation(req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+	if _, ok := ResolvedHomeModelOptions(req); ok && (opts.SourceFormat == "openai-embeddings" || opts.SourceFormat == "openai-rerank") {
+		return newHomeOperationMetadataError(requestedModelAliasFromOptions(opts, req.Model))
+	}
 	if options, ok := ResolvedHomeModelOptions(req); ok && options.HasDispatchMetadata() {
 		return newHomeOperationMetadataError(requestedModelAliasFromOptions(opts, req.Model))
 	}
