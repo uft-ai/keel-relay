@@ -89,7 +89,7 @@ func NewPeriodLedger(ctx context.Context, store PeriodStore, now func() time.Tim
 		if _, exists := rows[key]; exists {
 			return nil, fmt.Errorf("%w: duplicate subject", ErrPeriodInvalidInput)
 		}
-		rows[key] = record
+		rows[key] = clonePeriodRecord(record)
 	}
 	return &PeriodLedger{store: store, now: now, rows: rows}, nil
 }
@@ -163,10 +163,10 @@ func (l *PeriodLedger) RecordProviderExhaustion(ctx context.Context, authIndex, 
 	current.UpdatedAt = l.now().UTC()
 	if errSave := l.store.Save(ctx, current); errSave != nil {
 		l.rows[key] = current
-		return current, fmt.Errorf("%w: %w", ErrPeriodSave, errSave)
+		return clonePeriodRecord(current), fmt.Errorf("%w: %w", ErrPeriodSave, errSave)
 	}
 	l.rows[key] = current
-	return current, nil
+	return clonePeriodRecord(current), nil
 }
 
 // ApplyObservation applies one quota observation using version CAS.
@@ -184,28 +184,35 @@ func (l *PeriodLedger) ApplyObservation(ctx context.Context, observation PeriodO
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	current := l.rows[key]
+	current := clonePeriodRecord(l.rows[key])
+	if current.Version == 0 {
+		current.AuthIndex = canonicalAuthIndex(observation.AuthIndex)
+		current.Model = strings.TrimSpace(observation.Model)
+	}
 	if current.ObservationID != "" && current.ObservationID == observation.ObservationID {
 		if current.ObservationHash == hash {
-			return current, nil
+			return clonePeriodRecord(current), nil
 		}
-		return current, ErrPeriodObservationConflict
+		return clonePeriodRecord(current), ErrPeriodObservationConflict
 	}
 	if observation.BasedOnVersion != current.Version {
-		return current, ErrPeriodStaleObservation
+		return clonePeriodRecord(current), ErrPeriodStaleObservation
+	}
+	if !current.UpdatedAt.IsZero() && observation.NotBefore.Before(current.UpdatedAt) {
+		return clonePeriodRecord(current), ErrPeriodStaleObservation
 	}
 	next, errDecision := decidePeriodObservation(current, observation, hash)
 	if errDecision != nil {
-		return current, errDecision
+		return clonePeriodRecord(current), errDecision
 	}
 	if samePeriodRecord(current, next) {
-		return current, nil
+		return clonePeriodRecord(current), nil
 	}
 	if errSave := l.store.Save(ctx, next); errSave != nil {
-		return current, fmt.Errorf("%w: %w", ErrPeriodSave, errSave)
+		return clonePeriodRecord(current), fmt.Errorf("%w: %w", ErrPeriodSave, errSave)
 	}
 	l.rows[key] = next
-	return next, nil
+	return clonePeriodRecord(next), nil
 }
 
 func decidePeriodObservation(current PeriodRecord, observation PeriodObservation, hash string) (PeriodRecord, error) {
@@ -223,6 +230,9 @@ func decidePeriodObservation(current PeriodRecord, observation PeriodObservation
 			next.ExhaustedAt = observation.NotBefore.UTC()
 		}
 		if observation.PeriodEnd != nil {
+			if next.PeriodEnd == nil && !observation.PeriodEnd.UTC().After(next.ExhaustedAt.UTC()) {
+				return current, ErrPeriodObservationInvalid
+			}
 			next.PeriodEnd = cloneTime(observation.PeriodEnd)
 		}
 		next.ObservationID = observation.ObservationID

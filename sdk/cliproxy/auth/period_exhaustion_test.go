@@ -25,6 +25,18 @@ func fixedNow() func() time.Time {
 	return func() time.Time { return now }
 }
 
+func TestPeriodLedgerHealthyObservationKeepsSubjectWithoutCreatingExhaustion(t *testing.T) {
+	ledger, err := NewPeriodLedger(t.Context(), &memoryPeriodStore{}, fixedNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := int64(10)
+	record, err := ledger.ApplyObservation(t.Context(), PeriodObservation{ObservationID: "healthy", AuthIndex: "1111111111111111", Model: "qwen3.8-flash", State: "available", Remaining: &remaining, NotBefore: fixedNow()()})
+	if err != nil || record.AuthIndex != "1111111111111111" || record.Model != "qwen3.8-flash" || record.Blocked || record.Version != 0 || len(ledger.List()) != 0 {
+		t.Fatalf("healthy subject lost or exhaustion invented: %+v, %v", record, err)
+	}
+}
+
 func TestPeriodLedgerExhaustionPersistsAndSurvivesClear(t *testing.T) {
 	store := &memoryPeriodStore{}
 	ledger, err := NewPeriodLedger(context.Background(), store, fixedNow())
@@ -41,7 +53,7 @@ func TestPeriodLedgerExhaustionPersistsAndSurvivesClear(t *testing.T) {
 	}
 	anchor := exhaustedAt.Add(time.Hour)
 	if _, err := ledger.ApplyObservation(context.Background(), PeriodObservation{
-		ObservationID: "anchor", BasedOnVersion: 1, State: "exhausted", AuthIndex: "0123456789abcdef", Model: "Qwen3.6", PeriodEnd: &anchor,
+		ObservationID: "anchor", BasedOnVersion: 1, State: "exhausted", AuthIndex: "0123456789abcdef", Model: "Qwen3.6", PeriodEnd: &anchor, NotBefore: fixedNow()(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +61,7 @@ func TestPeriodLedgerExhaustionPersistsAndSurvivesClear(t *testing.T) {
 	remaining := int64(1)
 	cleared, err := ledger.ApplyObservation(context.Background(), PeriodObservation{
 		ObservationID: "clear-1", BasedOnVersion: 1, State: "available", AuthIndex: "0123456789abcdef", Model: "Qwen3.6",
-		PeriodEnd: &end, Remaining: &remaining, NotBefore: anchor,
+		PeriodEnd: &end, Remaining: &remaining, NotBefore: fixedNow()(),
 	})
 	if err != nil || cleared.Blocked || cleared.Version != 1 {
 		t.Fatalf("clear = %+v err=%v", cleared, err)
@@ -73,7 +85,9 @@ func TestPeriodLedgerSaveFailuresAreClosed(t *testing.T) {
 	}
 	store.err = nil
 	anchor := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := ledger.ApplyObservation(context.Background(), exhaustedObservation("anchor", 1, &anchor)); err != nil {
+	observation := exhaustedObservation("anchor", 1, &anchor)
+	observation.NotBefore = fixedNow()()
+	if _, err := ledger.ApplyObservation(context.Background(), observation); err != nil {
 		t.Fatal(err)
 	}
 	store.err = errors.New("disk")
@@ -98,11 +112,15 @@ func TestPeriodLedgerRejectsStaleAndRegressingObservations(t *testing.T) {
 	if _, err := ledger.RecordProviderExhaustion(context.Background(), "0123456789abcdef", "m", first.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ledger.ApplyObservation(context.Background(), exhaustedObservation("anchor", 1, &first)); err != nil {
+	anchorObservation := exhaustedObservation("anchor", 1, &first)
+	anchorObservation.NotBefore = fixedNow()()
+	if _, err := ledger.ApplyObservation(context.Background(), anchorObservation); err != nil {
 		t.Fatal(err)
 	}
 	older := first.Add(-time.Hour)
-	if _, err := ledger.ApplyObservation(context.Background(), exhaustedObservation("old", 1, &older)); !errors.Is(err, ErrPeriodObservationInvalid) {
+	regressing := exhaustedObservation("old", 1, &older)
+	regressing.NotBefore = fixedNow()()
+	if _, err := ledger.ApplyObservation(context.Background(), regressing); !errors.Is(err, ErrPeriodObservationInvalid) {
 		t.Fatalf("regressing period err=%v", err)
 	}
 	if _, err := ledger.ApplyObservation(context.Background(), exhaustedObservation("old-version", 0, &first)); !errors.Is(err, ErrPeriodStaleObservation) {
@@ -196,6 +214,41 @@ func TestPeriodLedgerAnchorsUnknownAndRejectsConflicts(t *testing.T) {
 	again, _, _ := ledger.Get("0123456789abcdef", "m")
 	if again.PeriodEnd.Equal(*got.PeriodEnd) {
 		t.Fatal("returned pointer aliased ledger state")
+	}
+}
+
+func TestPeriodLedgerClonesReturnedRecordsAndRejectsOlderUpdates(t *testing.T) {
+	store := &memoryPeriodStore{}
+	ledger, err := NewPeriodLedger(context.Background(), store, fixedNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := ledger.RecordProviderExhaustion(context.Background(), "0123456789abcdef", "m", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := record.ExhaustedAt.Add(time.Hour)
+	record.ExhaustedAt = moved
+	stored, _, _ := ledger.Get("0123456789abcdef", "m")
+	if stored.ExhaustedAt.Equal(moved) {
+		t.Fatal("returned exhaustion record aliased internal state")
+	}
+	stale := stored.UpdatedAt.Add(-time.Second)
+	end := stored.ExhaustedAt.Add(time.Hour)
+	_, err = ledger.ApplyObservation(context.Background(), PeriodObservation{
+		ObservationID: "older", BasedOnVersion: stored.Version, State: "exhausted", AuthIndex: "0123456789abcdef", Model: "m",
+		PeriodEnd: &end, NotBefore: stale,
+	})
+	if !errors.Is(err, ErrPeriodStaleObservation) {
+		t.Fatalf("older observation err=%v", err)
+	}
+	expired := stored.ExhaustedAt.Add(-time.Second)
+	_, err = ledger.ApplyObservation(context.Background(), PeriodObservation{
+		ObservationID: "expired-anchor", BasedOnVersion: stored.Version, State: "exhausted", AuthIndex: "0123456789abcdef", Model: "m",
+		PeriodEnd: &expired, NotBefore: stored.UpdatedAt,
+	})
+	if !errors.Is(err, ErrPeriodObservationInvalid) {
+		t.Fatalf("expired exhausted anchor err=%v", err)
 	}
 }
 
