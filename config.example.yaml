@@ -1128,6 +1128,10 @@ observability:
     # files are deleted until within the limit. Set to 0 to disable.
     logs-max-total-size-mb: 0
 
+    # Expire completed request captures after this many hours; 0 disables age eviction.
+    # Includes failed requests. Active captures, temporary spool files and application logs are excluded.
+    request-log-max-age-hours: 0
+
     # Maximum number of error log files retained when request logging is disabled.
     # When exceeded, the oldest error log files are deleted. Default is 10. Set to 0 to disable cleanup.
     error-logs-max-files: 10

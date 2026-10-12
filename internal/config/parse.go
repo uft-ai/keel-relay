@@ -122,6 +122,9 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	if errValidate := cfg.ValidateOpenAICompatibilityModels(); errValidate != nil {
 		return nil, errValidate
 	}
+	if cfg.RequestLogMaxAgeHours < 0 || cfg.RequestLogMaxAgeHours > 2562047 {
+		return nil, fmt.Errorf("request-log-max-age-hours must be between 0 and 2562047")
+	}
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 	cfg.SanitizeOAuthModelAlias()
 	cfg.SanitizeOAuthSettings()

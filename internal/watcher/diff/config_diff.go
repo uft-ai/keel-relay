@@ -73,6 +73,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.LogsMaxTotalSizeMB != newCfg.LogsMaxTotalSizeMB {
 		changes = append(changes, fmt.Sprintf("logs-max-total-size-mb: %d -> %d", oldCfg.LogsMaxTotalSizeMB, newCfg.LogsMaxTotalSizeMB))
 	}
+	if oldCfg.RequestLogMaxAgeHours != newCfg.RequestLogMaxAgeHours {
+		changes = append(changes, fmt.Sprintf("request-log-max-age-hours: %d -> %d", oldCfg.RequestLogMaxAgeHours, newCfg.RequestLogMaxAgeHours))
+	}
 	if oldCfg.ErrorLogsMaxFiles != newCfg.ErrorLogsMaxFiles {
 		changes = append(changes, fmt.Sprintf("error-logs-max-files: %d -> %d", oldCfg.ErrorLogsMaxFiles, newCfg.ErrorLogsMaxFiles))
 	}

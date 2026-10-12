@@ -63,6 +63,9 @@ type Config struct {
 	// When exceeded, the oldest log files are deleted until within the limit. Set to 0 to disable.
 	LogsMaxTotalSizeMB int `yaml:"logs-max-total-size-mb" json:"logs-max-total-size-mb"`
 
+	// RequestLogMaxAgeHours expires completed request captures; zero preserves legacy retention.
+	RequestLogMaxAgeHours int `yaml:"request-log-max-age-hours" json:"request-log-max-age-hours"`
+
 	// ErrorLogsMaxFiles limits the number of error log files retained when request logging is disabled.
 	// When exceeded, the oldest error log files are deleted. Default is 10. Set to 0 to disable cleanup.
 	ErrorLogsMaxFiles int `yaml:"error-logs-max-files" json:"error-logs-max-files"`

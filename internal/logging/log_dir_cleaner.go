@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -15,17 +17,55 @@ const logDirCleanerInterval = time.Minute
 
 var logDirCleanerCancel context.CancelFunc
 
-func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB int, protectedPath string) {
+var activeRequestLogs = struct {
+	sync.Mutex
+	paths map[string]struct{}
+}{paths: make(map[string]struct{})}
+
+// Opening and deletion share a lock so a cleaner cannot remove a log before protection is registered.
+type requestLogFile struct{ *os.File }
+
+func openRequestLogFile(path string) (*requestLogFile, error) {
+	activeRequestLogs.Lock()
+	defer activeRequestLogs.Unlock()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	activeRequestLogs.paths[filepath.Clean(path)] = struct{}{}
+	return &requestLogFile{File: file}, nil
+}
+
+func (file *requestLogFile) Close() error {
+	activeRequestLogs.Lock()
+	defer activeRequestLogs.Unlock()
+	err := file.File.Close()
+	delete(activeRequestLogs.paths, filepath.Clean(file.Name()))
+	return err
+}
+
+func removeInactiveLog(path string) (bool, error) {
+	activeRequestLogs.Lock()
+	defer activeRequestLogs.Unlock()
+	if _, active := activeRequestLogs.paths[filepath.Clean(path)]; active {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+var completedRequestLogName = regexp.MustCompile(`-\d{4}-\d{2}-\d{2}T\d{6}(?:_\d+)?-[A-Za-z0-9_-]+\.log(?:\.gz)?$`)
+
+func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB, maxAgeHours int, protectedPath string) {
 	stopLogDirCleanerLocked()
 
-	if maxTotalSizeMB <= 0 {
+	if maxTotalSizeMB <= 0 && maxAgeHours <= 0 {
 		return
 	}
 
 	maxBytes := int64(maxTotalSizeMB) * 1024 * 1024
-	if maxBytes <= 0 {
-		return
-	}
 
 	dir := strings.TrimSpace(logDir)
 	if dir == "" {
@@ -34,7 +74,7 @@ func configureLogDirCleanerLocked(logDir string, maxTotalSizeMB int, protectedPa
 
 	ctx, cancel := context.WithCancel(context.Background())
 	logDirCleanerCancel = cancel
-	go runLogDirCleaner(ctx, filepath.Clean(dir), maxBytes, strings.TrimSpace(protectedPath))
+	go runLogDirCleaner(ctx, filepath.Clean(dir), maxBytes, time.Duration(maxAgeHours)*time.Hour, strings.TrimSpace(protectedPath))
 }
 
 func stopLogDirCleanerLocked() {
@@ -45,11 +85,14 @@ func stopLogDirCleanerLocked() {
 	logDirCleanerCancel = nil
 }
 
-func runLogDirCleaner(ctx context.Context, logDir string, maxBytes int64, protectedPath string) {
+func runLogDirCleaner(ctx context.Context, logDir string, maxBytes int64, maxAge time.Duration, protectedPath string) {
 	ticker := time.NewTicker(logDirCleanerInterval)
 	defer ticker.Stop()
 
 	cleanOnce := func() {
+		if _, err := enforceRequestLogMaxAge(logDir, maxAge, protectedPath, time.Now()); err != nil {
+			log.WithError(err).Warn("logging: failed to expire request captures")
+		}
 		deleted, errClean := enforceLogDirSizeLimit(logDir, maxBytes, protectedPath)
 		if errClean != nil {
 			log.WithError(errClean).Warn("logging: failed to enforce log directory size limit")
@@ -145,14 +188,54 @@ func enforceLogDirSizeLimit(logDir string, maxBytes int64, protectedPath string)
 		if protected != "" && filepath.Clean(file.path) == protected {
 			continue
 		}
-		if errRemove := os.Remove(file.path); errRemove != nil {
+		removed, errRemove := removeInactiveLog(file.path)
+		if errRemove != nil {
 			log.WithError(errRemove).Warnf("logging: failed to remove old log file: %s", filepath.Base(file.path))
+			continue
+		}
+		if !removed {
 			continue
 		}
 		total -= file.size
 		deleted++
 	}
 
+	return deleted, nil
+}
+
+func enforceRequestLogMaxAge(dir string, maxAge time.Duration, protectedPath string, now time.Time) (int, error) {
+	if maxAge <= 0 || strings.TrimSpace(dir) == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !completedRequestLogName.MatchString(name) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if protectedPath != "" && filepath.Clean(path) == filepath.Clean(protectedPath) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(now.Add(-maxAge)) {
+			continue
+		}
+		removed, err := removeInactiveLog(path)
+		if err != nil && !os.IsNotExist(err) {
+			return deleted, err
+		}
+		if removed {
+			deleted++
+		}
+	}
 	return deleted, nil
 }
 

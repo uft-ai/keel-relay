@@ -104,6 +104,41 @@ func TestV8ExampleLoadsAndRoundTrips(t *testing.T) {
 	}
 }
 
+func TestRequestLogRetentionV8RoundTripAndBounds(t *testing.T) {
+	data := []byte("config-version: 8\nobservability:\n  logs:\n    request-log-max-age-hours: 24\n")
+	cfg, err := ParseConfigBytes(data)
+	if err != nil || cfg.RequestLogMaxAgeHours != 24 {
+		t.Fatalf("parse retention: %+v, %v", cfg, err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = SaveConfigPreserveComments(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadConfig(path)
+	if err != nil || reloaded.RequestLogMaxAgeHours != 24 {
+		t.Fatalf("reload retention: %+v, %v", reloaded, err)
+	}
+	legacy, err := ParseConfigBytes([]byte("request-log-max-age-hours: 24\n"))
+	if err != nil || legacy.RequestLogMaxAgeHours != 24 {
+		t.Fatalf("legacy setting: %+v %v", legacy, err)
+	}
+	for _, value := range []int{-1, 2562048} {
+		bad := []byte(fmt.Sprintf("config-version: 8\nobservability:\n  logs:\n    request-log-max-age-hours: %d\n", value))
+		if _, err := ParseConfigBytes(bad); err == nil {
+			t.Fatalf("accepted invalid hours %d", value)
+		}
+		if err = os.WriteFile(path, bad, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatalf("loaded invalid hours %d", value)
+		}
+	}
+}
+
 func TestV8PresencePrecedenceAndCleanup(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string

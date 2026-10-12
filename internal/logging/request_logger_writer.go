@@ -311,7 +311,7 @@ func (l *FileRequestLogger) generateFilename(url string, requestID ...string) st
 
 // createUniqueLogFile atomically opens a unique log file within dir. If a file with filename already exists,
 // it avoids overwriting by injecting an incrementing sequence number before the trailing request ID component.
-func createUniqueLogFile(dir, filename string) (*os.File, string, error) {
+func createUniqueLogFile(dir, filename string) (*requestLogFile, string, error) {
 	ext := filepath.Ext(filename)
 	base := strings.TrimSuffix(filename, ext)
 	idx := strings.LastIndex(base, "-")
@@ -323,7 +323,7 @@ func createUniqueLogFile(dir, filename string) (*os.File, string, error) {
 	}
 
 	target := filepath.Join(dir, filename)
-	logFile, errOpen := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	logFile, errOpen := openRequestLogFile(target)
 	if errOpen == nil {
 		return logFile, target, nil
 	}
@@ -334,7 +334,7 @@ func createUniqueLogFile(dir, filename string) (*os.File, string, error) {
 	for seq := 1; seq <= 1000; seq++ {
 		candidateName := fmt.Sprintf("%s_%d-%s%s", prefix, seq, idPart, ext)
 		candidatePath := filepath.Join(dir, candidateName)
-		logCandidate, errCandidate := os.OpenFile(candidatePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		logCandidate, errCandidate := openRequestLogFile(candidatePath)
 		if errCandidate == nil {
 			return logCandidate, candidatePath, nil
 		}
@@ -420,7 +420,7 @@ func (l *FileRequestLogger) cleanupOldErrorLogs() error {
 	})
 
 	for _, file := range files[l.errorLogsMaxFiles:] {
-		if errRemove := os.Remove(filepath.Join(l.logsDir, file.name)); errRemove != nil {
+		if _, errRemove := removeInactiveLog(filepath.Join(l.logsDir, file.name)); errRemove != nil {
 			log.WithError(errRemove).Warnf("failed to remove old error log: %s", file.name)
 		}
 	}

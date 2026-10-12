@@ -143,6 +143,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.LogsMaxTotalSizeMB < 0 {
 		cfg.LogsMaxTotalSizeMB = 0
 	}
+	if cfg.RequestLogMaxAgeHours < 0 || cfg.RequestLogMaxAgeHours > 2562047 {
+		return nil, fmt.Errorf("request-log-max-age-hours must be between 0 and 2562047")
+	}
 
 	if cfg.ErrorLogsMaxFiles < 0 {
 		cfg.ErrorLogsMaxFiles = 10
