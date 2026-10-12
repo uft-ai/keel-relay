@@ -184,6 +184,7 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 		apiKey = strings.TrimSpace(coreusage.APIKeyFromContext(ctx))
 	}
 	plugin.HandleUsage(ctx, pluginapi.UsageRecord{
+		TokensReported:      record.TokensReported,
 		RequestID:           requestID,
 		TraceID:             traceID,
 		Provider:            record.Provider,

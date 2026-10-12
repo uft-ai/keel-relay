@@ -88,6 +88,34 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 	})
 }
 
+func TestUsageQueueTokenPresenceIsTopLevelAndOptional(t *testing.T) {
+	for _, state := range []string{"legacy", "missing", "zero"} {
+		t.Run(state, func(t *testing.T) {
+			withEnabledQueue(t, func() {
+				var reported *bool
+				if state != "legacy" {
+					value := state == "zero"
+					reported = &value
+				}
+				(&usageQueuePlugin{}).HandleUsage(t.Context(), coreusage.Record{Provider: "openai-compatible-nan", Model: "qwen", TokensReported: reported})
+				payload := popSinglePayload(t)
+				if reported == nil {
+					requireMissingField(t, payload, "tokens_reported")
+				} else {
+					requireBoolField(t, payload, "tokens_reported", *reported)
+				}
+				var tokens map[string]json.RawMessage
+				if err := json.Unmarshal(payload["tokens"], &tokens); err != nil {
+					t.Fatal(err)
+				}
+				if _, found := tokens["tokens_reported"]; found {
+					t.Fatal("presence belongs beside token counters")
+				}
+			})
+		})
+	}
+}
+
 func TestUsageQueuePluginNormalizesDirectSDKUsageByProvider(t *testing.T) {
 	tests := []struct {
 		provider  string

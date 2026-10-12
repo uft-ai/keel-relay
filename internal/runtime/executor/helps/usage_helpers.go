@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,7 @@ type UsageReporter struct {
 	serviceTier         string
 	generate            bool
 	stream              bool
+	trackTokenPresence  bool
 	requestedAt         time.Time
 	ttftMu              sync.RWMutex
 	ttft                time.Duration
@@ -82,6 +84,13 @@ func NewExecutorUsageReporter(ctx context.Context, executor usageExecutor, model
 	reporter := NewUsageReporter(ctx, provider, model, auth)
 	reporter.executorType = ExecutorTypeName(executor)
 	return reporter
+}
+
+// TrackTokenPresence opts this executor into explicit missing-usage reports; call before execution.
+func (r *UsageReporter) TrackTokenPresence() {
+	if r != nil {
+		r.trackTokenPresence = true
+	}
 }
 
 func NewUsageReporter(ctx context.Context, provider, model string, auth *cliproxyauth.Auth) *UsageReporter {
@@ -630,6 +639,10 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	if r == nil {
 		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
+	if detail.TokensReported == nil && r.trackTokenPresence {
+		reported := false
+		detail.TokensReported = &reported
+	}
 	// Additional-model records describe a side model (image generation tool usage) that
 	// the upstream response model never refers to, so they must stay empty.
 	responseModel := ""
@@ -666,6 +679,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		Failed:              failed,
 		Fail:                fail,
 		Detail:              detail,
+		TokensReported:      detail.TokensReported,
 	}
 }
 
@@ -884,7 +898,7 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 		return
 	}
 	responseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
-	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) || (detail.TokensReported != nil && *detail.TokensReported) {
 		preservedTier := b.detail.ResponseServiceTier
 		b.detail = detail
 		if b.detail.ResponseServiceTier == "" {
@@ -1020,7 +1034,8 @@ func ParseOpenAIUsage(data []byte) usage.Detail {
 	responseServiceTier := extractResponseServiceTier(data)
 	usageNode := gjson.ParseBytes(data).Get("usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
-		return usage.Detail{ResponseServiceTier: responseServiceTier}
+		reported := false
+		return usage.Detail{ResponseServiceTier: responseServiceTier, TokensReported: &reported}
 	}
 	detail := parseOpenAIStyleUsageNode(usageNode)
 	detail.ResponseServiceTier = responseServiceTier
@@ -1050,6 +1065,7 @@ func hasOpenAIStyleUsageBucketFields(usageNode gjson.Result) bool {
 }
 
 func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
+	reported := validOpenAITokenCounters(usageNode)
 	inputNode := usageNode.Get("prompt_tokens")
 	if !inputNode.Exists() {
 		inputNode = usageNode.Get("input_tokens")
@@ -1059,9 +1075,10 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 		outputNode = usageNode.Get("output_tokens")
 	}
 	detail := usage.Detail{
-		InputTokens:  inputNode.Int(),
-		OutputTokens: outputNode.Int(),
-		TotalTokens:  usageNode.Get("total_tokens").Int(),
+		TokensReported: &reported,
+		InputTokens:    inputNode.Int(),
+		OutputTokens:   outputNode.Int(),
+		TotalTokens:    usageNode.Get("total_tokens").Int(),
 	}
 	cached := usageNode.Get("prompt_tokens_details.cached_tokens")
 	if !cached.Exists() {
@@ -1125,6 +1142,26 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 		detail.TotalTokens = detail.TokenBreakdown.TotalTokens
 	}
 	return detail
+}
+
+func validOpenAITokenCounters(node gjson.Result) bool {
+	found := false
+	for _, path := range []string{"prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
+		"prompt_tokens_details.cached_tokens", "input_tokens_details.cached_tokens",
+		"prompt_tokens_details.cache_write_tokens", "prompt_tokens_details.cache_creation_tokens",
+		"input_tokens_details.cache_write_tokens", "input_tokens_details.cache_creation_tokens",
+		"completion_tokens_details.reasoning_tokens", "output_tokens_details.reasoning_tokens"} {
+		counter := node.Get(path)
+		if !counter.Exists() {
+			continue
+		}
+		value, err := strconv.ParseInt(counter.Raw, 10, 64)
+		if counter.Type != gjson.Number || err != nil || value < 0 {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func ParseOpenAIStreamUsage(line []byte) (usage.Detail, bool) {

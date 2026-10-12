@@ -93,7 +93,7 @@ func TestOpenAICompatNativeCompletions(t *testing.T) {
 				gjson.GetBytes(body, "custom").Exists() || gjson.GetBytes(body, "stream_options").Exists() {
 				t.Fatalf("native completion fields or final payload rules changed: %s", body)
 			}
-			if record := capture.await(t); record.Failed || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
+			if record := capture.await(t); record.Failed || record.TokensReported == nil || !*record.TokensReported || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
 				t.Fatalf("native completion usage lost: %+v", record)
 			}
 		})
@@ -130,7 +130,7 @@ func TestOpenAICompatNativeResponsesPreservesPayloadAndFinalRules(t *testing.T) 
 	if gjson.GetBytes(body, "messages").Exists() || !gjson.GetBytes(body, "input").Exists() || string(result.Payload) != response {
 		t.Fatalf("native protocol changed: %s", result.Payload)
 	}
-	if record := capture.await(t); record.Failed || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
+	if record := capture.await(t); record.Failed || record.TokensReported == nil || !*record.TokensReported || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
 		t.Fatalf("native usage lost: %+v", record)
 	}
 }
@@ -163,7 +163,7 @@ func TestOpenAICompatNativeResponsesSSEPreservesUnknownEvents(t *testing.T) {
 	if output.String() != frames {
 		t.Fatalf("native events changed: %s", output.String())
 	}
-	if record := capture.await(t); record.Failed || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
+	if record := capture.await(t); record.Failed || record.TokensReported == nil || !*record.TokensReported || record.Detail.InputTokens != 5 || record.Detail.OutputTokens != 3 {
 		t.Fatalf("native stream usage lost: %+v", record)
 	}
 }

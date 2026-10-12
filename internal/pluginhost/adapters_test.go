@@ -2439,6 +2439,7 @@ func TestUsageAdapterPropagatesBaseURL(t *testing.T) {
 
 func TestUsageAdapterPropagatesResponseModelServiceTierAndStream(t *testing.T) {
 	var gotRecord pluginapi.UsageRecord
+	reported := false
 	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {
 		gotRecord = record
 	})
@@ -2459,6 +2460,7 @@ func TestUsageAdapterPropagatesResponseModelServiceTierAndStream(t *testing.T) {
 		ResponseModel:       "gpt-5.6-luna",
 		ServiceTier:         "default",
 		ResponseServiceTier: "priority",
+		TokensReported:      &reported,
 		Stream:              true,
 	})
 	if gotRecord.Model != "gpt-5.4" {
@@ -2475,6 +2477,9 @@ func TestUsageAdapterPropagatesResponseModelServiceTierAndStream(t *testing.T) {
 	}
 	if !gotRecord.Stream {
 		t.Fatalf("plugin Stream = %v, want true", gotRecord.Stream)
+	}
+	if gotRecord.TokensReported == nil || *gotRecord.TokensReported {
+		t.Fatal("plugin lost explicit missing-token flag")
 	}
 
 	// Verify empty fields and Stream=false propagate cleanly without corruption.
@@ -2494,6 +2499,9 @@ func TestUsageAdapterPropagatesResponseModelServiceTierAndStream(t *testing.T) {
 	}
 	if gotRecord.Stream {
 		t.Fatalf("plugin Stream = %v, want false", gotRecord.Stream)
+	}
+	if gotRecord.TokensReported != nil {
+		t.Fatal("plugin converted legacy unknown usage into a value")
 	}
 }
 

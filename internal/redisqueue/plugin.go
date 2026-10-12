@@ -137,6 +137,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		XForwardedFor:    clientRequestMetadata.XForwardedFor,
 		UserAgent:        clientRequestMetadata.UserAgent,
 		Tokens:           tokens,
+		TokensReported:   record.TokensReported,
 		Failed:           failed,
 		Generate:         coreusage.GenerateEnabled(record.Generate),
 		Stream:           stream,
@@ -215,6 +216,7 @@ type requestDetail struct {
 	XForwardedFor    string      `json:"x_forwarded_for"`
 	UserAgent        string      `json:"user_agent"`
 	Tokens           tokenStats  `json:"tokens"`
+	TokensReported   *bool       `json:"tokens_reported,omitempty"`
 	Failed           bool        `json:"failed"`
 	Generate         bool        `json:"generate"`
 	Stream           bool        `json:"stream"`

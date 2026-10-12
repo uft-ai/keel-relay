@@ -70,6 +70,8 @@ type Record struct {
 	Failed      bool
 	Fail        Failure
 	Detail      Detail
+	// TokensReported distinguishes provider counters (including zero) from missing or legacy usage.
+	TokensReported *bool
 	// ResponseHeaders stores a snapshot of upstream response headers for usage sinks.
 	ResponseHeaders http.Header
 }
@@ -82,6 +84,7 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
+	TokensReported      *bool
 	InputTokens         int64
 	OutputTokens        int64
 	ReasoningTokens     int64

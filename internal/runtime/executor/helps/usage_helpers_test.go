@@ -53,6 +53,46 @@ func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	}
 }
 
+func TestOpenAITokenPresenceKeepsZeroMissingAndLegacyDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		body     string
+		reported bool
+	}{
+		{`{"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`, true},
+		{`{"usage":{"input_tokens":4}}`, true},
+		{`{}`, false}, {`{"usage":null}`, false}, {`{"usage":{}}`, false},
+		{`{"usage":{"total_tokens":null}}`, false}, {`{"usage":{"total_tokens":"0"}}`, false},
+		{`{"usage":{"total_tokens":-1}}`, false}, {`{"usage":{"total_tokens":1.5}}`, false},
+	} {
+		detail := ParseOpenAIUsage([]byte(tc.body))
+		if detail.TokensReported == nil || *detail.TokensReported != tc.reported {
+			t.Fatalf("presence for %s: %+v", tc.body, detail)
+		}
+	}
+	r := NewUsageReporter(t.Context(), "legacy", "model", nil)
+	if record := r.buildRecord(usage.Detail{}, false); record.TokensReported != nil {
+		t.Fatal("legacy record was relabelled")
+	}
+	r.TrackTokenPresence()
+	if record := r.buildRecord(usage.Detail{}, false); record.TokensReported == nil || *record.TokensReported {
+		t.Fatal("opted-in missing usage was not false")
+	}
+	detail := ParseOpenAIUsage([]byte(`{"usage":{"total_tokens":0}}`))
+	if record := r.buildRecord(detail, false); record.TokensReported == nil || !*record.TokensReported {
+		t.Fatal("reported zero became missing")
+	}
+}
+
+func TestOpenAIStreamTokenPresenceSurvivesTierOnlyFrame(t *testing.T) {
+	var buffer StreamUsageBuffer
+	buffer.ObserveOpenAIStream([]byte(`{"service_tier":"default","usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`))
+	buffer.ObserveOpenAIStream([]byte(`{"service_tier":"priority"}`))
+	detail, ok := buffer.Detail()
+	if !ok || detail.TokensReported == nil || !*detail.TokensReported || detail.TotalTokens != 0 || detail.ResponseServiceTier != "default" {
+		t.Fatalf("zero presence or tier lost: %+v", detail)
+	}
+}
+
 func TestParseOpenAIUsageResponses(t *testing.T) {
 	data := []byte(`{"service_tier":"default","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":7},"output_tokens_details":{"reasoning_tokens":9}}}`)
 	detail := ParseOpenAIUsage(data)
@@ -148,6 +188,10 @@ func TestParseOpenAIUsageNormalizesCacheCreationAlias(t *testing.T) {
 func TestParseOpenAIUsageIgnoresNullUsage(t *testing.T) {
 	data := []byte(`{"usage":null}`)
 	detail := ParseOpenAIUsage(data)
+	if detail.TokensReported == nil || *detail.TokensReported {
+		t.Fatal("null usage must be explicitly absent")
+	}
+	detail.TokensReported = nil
 	if detail != (usage.Detail{}) {
 		t.Fatalf("detail = %+v, want zero detail", detail)
 	}

@@ -141,6 +141,7 @@ func (e *OpenAICompatExecutor) newNativeRequest(ctx context.Context, auth *clipr
 func (e *OpenAICompatExecutor) executeNative(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+	reporter.TrackTokenPresence()
 	defer reporter.TrackFailure(ctx, &err)
 
 	baseURL, apiKey := e.resolveCredentials(auth)
@@ -195,6 +196,7 @@ func (e *OpenAICompatExecutor) executeNative(ctx context.Context, auth *cliproxy
 func (e *OpenAICompatExecutor) executeNativeStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
+	reporter.TrackTokenPresence()
 	defer reporter.TrackFailure(ctx, &err)
 
 	baseURL, apiKey := e.resolveCredentials(auth)

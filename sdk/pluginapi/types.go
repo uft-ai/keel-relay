@@ -1484,6 +1484,8 @@ type ManagementResponse struct {
 
 // UsageRecord describes request usage and billing metadata.
 type UsageRecord struct {
+	// TokensReported is nil for legacy events, false for absent usage, and true for provider counters.
+	TokensReported *bool
 	// RequestID uniquely identifies this specific model execution instance (UUID v4).
 	RequestID string
 	// TraceID identifies the parent inbound HTTP request when available (8-character hex).
