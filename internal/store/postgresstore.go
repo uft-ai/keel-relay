@@ -23,6 +23,7 @@ const (
 	defaultConfigTable   = "config_store"
 	defaultAuthTable     = "auth_store"
 	defaultCooldownTable = "cooldown_store"
+	defaultPeriodTable   = "period_ledger"
 	defaultConfigKey     = "config"
 )
 
@@ -33,6 +34,7 @@ type PostgresStoreConfig struct {
 	ConfigTable   string
 	AuthTable     string
 	CooldownTable string
+	PeriodTable   string
 	SpoolDir      string
 }
 
@@ -45,6 +47,7 @@ type PostgresStore struct {
 	configPath    string
 	authDir       string
 	cooldownStore *postgresCooldownStateStore
+	periodStore   *PostgresPeriodStore
 	mu            sync.Mutex
 	persistAuthFn func(ctx context.Context, relID string, data []byte) error
 }
@@ -64,6 +67,9 @@ func NewPostgresStore(ctx context.Context, cfg PostgresStoreConfig) (*PostgresSt
 	}
 	if cfg.CooldownTable == "" {
 		cfg.CooldownTable = defaultCooldownTable
+	}
+	if cfg.PeriodTable == "" {
+		cfg.PeriodTable = defaultPeriodTable
 	}
 
 	spoolRoot := strings.TrimSpace(cfg.SpoolDir)
@@ -104,6 +110,7 @@ func NewPostgresStore(ctx context.Context, cfg PostgresStoreConfig) (*PostgresSt
 		authDir:    authDir,
 	}
 	store.cooldownStore = &postgresCooldownStateStore{store: store}
+	store.periodStore = NewPostgresPeriodStore(db, "")
 	return store, nil
 }
 
@@ -162,7 +169,21 @@ func (s *PostgresStore) EnsureSchema(ctx context.Context) error {
 	`, cooldownTable)); err != nil {
 		return fmt.Errorf("postgres store: create cooldown table: %w", err)
 	}
+	if s.periodStore != nil {
+		s.periodStore.table = s.fullTableName(s.cfg.PeriodTable)
+		if err := s.periodStore.EnsurePeriodSchema(ctx); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// PeriodStore returns the durable period ledger. EnsureSchema must run before load.
+func (s *PostgresStore) PeriodStore() cliproxyauth.PeriodStore {
+	if s == nil {
+		return nil
+	}
+	return s.periodStore
 }
 
 // Bootstrap synchronizes configuration and auth records between PostgreSQL and the local workspace.
