@@ -21,7 +21,7 @@ import (
 
 func (l *FileRequestLogger) writeNonStreamingLog(
 	w io.Writer,
-	url, method string,
+	url, method, requestID string,
 	requestHeaders map[string][]string,
 	requestBody []byte,
 	requestBodyPath string,
@@ -47,7 +47,7 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	isWebsocketTranscript := hasSectionPayload(websocketTimeline) || hasFileBodySourcePayload(websocketTimelineSource)
 	downstreamTransport := inferDownstreamTransport(requestHeaders, websocketTimeline, websocketTimelineSource)
 	upstreamTransport := inferUpstreamTransport(apiRequest, apiRequestSource, apiResponse, apiResponseSource, apiWebsocketTimeline, apiWebsocketTimelineSource, apiResponseErrors)
-	if errWrite := writeRequestInfoWithBody(w, url, method, requestHeaders, requestBody, requestBodyPath, requestTimestamp, downstreamTransport, upstreamTransport, !isWebsocketTranscript); errWrite != nil {
+	if errWrite := writeRequestInfoWithBody(w, url, method, requestID, requestHeaders, requestBody, requestBodyPath, requestTimestamp, downstreamTransport, upstreamTransport, !isWebsocketTranscript); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPISectionWithSource(w, "=== WEBSOCKET TIMELINE ===\n", "=== WEBSOCKET TIMELINE", websocketTimeline, websocketTimelineSource, time.Time{}); errWrite != nil {
@@ -76,7 +76,7 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 
 func writeRequestInfoWithBody(
 	w io.Writer,
-	url, method string,
+	url, method, requestID string,
 	headers map[string][]string,
 	body []byte,
 	bodyPath string,
@@ -90,6 +90,11 @@ func writeRequestInfoWithBody(
 	}
 	if _, errWrite := io.WriteString(w, fmt.Sprintf("Version: %s\n", buildinfo.Version)); errWrite != nil {
 		return errWrite
+	}
+	if requestID != "" && !strings.ContainsAny(requestID, "\r\n") {
+		if _, errWrite := fmt.Fprintf(w, "Request ID: %s\n", requestID); errWrite != nil {
+			return errWrite
+		}
 	}
 	if _, errWrite := io.WriteString(w, fmt.Sprintf("URL: %s\n", url)); errWrite != nil {
 		return errWrite

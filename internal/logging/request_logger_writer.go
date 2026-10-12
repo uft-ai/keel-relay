@@ -79,6 +79,7 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 			&buf,
 			url,
 			method,
+			requestID,
 			requestHeaders,
 			body,
 			"",
@@ -142,6 +143,7 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 		logFile,
 		url,
 		method,
+		requestID,
 		requestHeaders,
 		body,
 		requestBodyPath,
@@ -236,6 +238,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 	writer := &FileStreamingLogWriter{
 		logsDir:          l.logsDir,
 		logFilename:      filename,
+		requestID:        requestID,
 		url:              url,
 		method:           method,
 		timestamp:        time.Now(),
