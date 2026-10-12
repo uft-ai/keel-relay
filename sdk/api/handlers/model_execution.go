@@ -232,7 +232,7 @@ func isModelExecutionImageProtocol(protocol string) bool {
 }
 
 func isModelExecutionSpeechProtocol(protocol string) bool {
-	return strings.EqualFold(strings.TrimSpace(protocol), "openai-speech")
+	return strings.EqualFold(strings.TrimSpace(protocol), "openai-speech") || strings.EqualFold(strings.TrimSpace(protocol), "openai-compatible-speech")
 }
 
 func validateModelExecutionProxy(raw string) *interfaces.ErrorMessage {

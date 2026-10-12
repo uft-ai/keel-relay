@@ -39,7 +39,7 @@ func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecuto
 	}
 	operation := RequestedModelOperation(opts)
 	var providers map[string]bool
-	if opts.SourceFormat == "openai-embeddings" || opts.SourceFormat == "openai-rerank" {
+	if opts.SourceFormat == "openai-embeddings" || opts.SourceFormat == "openai-rerank" || opts.SourceFormat == "openai-compatible-speech" || opts.SourceFormat == "openai-transcription" {
 		providers = make(map[string]bool)
 		m.mu.RLock()
 		for provider, executor := range m.executors {
@@ -51,6 +51,14 @@ func (m *Manager) withOperationDispatch(ctx context.Context, req cliproxyexecuto
 			case internalconfig.OpenAICompatOperationRerank:
 				_, providers[provider] = executor.(interface {
 					ExecuteRerank(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
+				})
+			case internalconfig.OpenAICompatOperationSpeech:
+				_, providers[provider] = executor.(interface {
+					ExecuteSpeech(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
+				})
+			case internalconfig.OpenAICompatOperationTranscription:
+				_, providers[provider] = executor.(interface {
+					ExecuteTranscription(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
 				})
 			}
 		}
@@ -237,6 +245,10 @@ func RequestedModelOperation(opts cliproxyexecutor.Options) string {
 		return internalconfig.OpenAICompatOperationEmbeddings
 	case "openai-rerank":
 		return internalconfig.OpenAICompatOperationRerank
+	case "openai-compatible-speech", "openai-speech":
+		return internalconfig.OpenAICompatOperationSpeech
+	case "openai-transcription":
+		return internalconfig.OpenAICompatOperationTranscription
 	case openAIImageSourceFormat:
 		if strings.HasSuffix(path, "/images/edits") {
 			return internalconfig.OpenAICompatOperationImageEdit
@@ -249,6 +261,16 @@ func RequestedModelOperation(opts cliproxyexecutor.Options) string {
 		return internalconfig.OpenAICompatOperationCompletions
 	}
 	return internalconfig.OpenAICompatOperationChat
+}
+
+func nonReplayableMediaOperation(opts cliproxyexecutor.Options) bool {
+	switch RequestedModelOperation(opts) {
+	case internalconfig.OpenAICompatOperationSpeech, internalconfig.OpenAICompatOperationTranscription,
+		internalconfig.OpenAICompatOperationImageGeneration, internalconfig.OpenAICompatOperationImageEdit:
+		return true
+	default:
+		return false
+	}
 }
 
 // Conversion belongs to the selected attempt: a native alias needs the original prompt fields.

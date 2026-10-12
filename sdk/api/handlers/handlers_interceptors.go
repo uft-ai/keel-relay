@@ -599,26 +599,36 @@ func (h *BaseAPIHandler) applyRequestInterceptorsAfterAuth(ctx context.Context, 
 
 func (h *BaseAPIHandler) applyResponseInterceptors(ctx context.Context, requestID, handlerType, normalizedModel, requestedModel string, opts coreexecutor.Options, rawResponseHeaders, responseHeaders http.Header, originalRequest, requestBody, body []byte, statusCode int, skipPluginID string, passthrough bool) ([]byte, http.Header) {
 	host := h.interceptorHost()
-	if host == nil {
-		return body, responseHeaders
+	if host != nil {
+		resp := interceptResponse(ctx, host, pluginapi.ResponseInterceptRequest{
+			RequestID:       requestID,
+			SourceFormat:    handlerType,
+			Model:           normalizedModel,
+			RequestedModel:  requestedModel,
+			Stream:          false,
+			RequestHeaders:  cloneHeader(opts.Headers),
+			ResponseHeaders: cloneHeader(rawResponseHeaders),
+			OriginalRequest: cloneBytes(originalRequest),
+			RequestBody:     cloneBytes(requestBody),
+			Body:            cloneBytes(body),
+			StatusCode:      statusCode,
+			Metadata:        opts.Metadata,
+		}, skipPluginID)
+		finalRawHeaders := finalInterceptorHeaders(rawResponseHeaders, resp.Headers)
+		responseHeaders = downstreamHeadersAfterInterceptors(rawResponseHeaders, finalRawHeaders, passthrough)
+		rawResponseHeaders = finalRawHeaders
+		if len(resp.Body) > 0 {
+			body = cloneBytes(resp.Body)
+		}
 	}
-	resp := interceptResponse(ctx, host, pluginapi.ResponseInterceptRequest{
-		RequestID:       requestID,
-		SourceFormat:    handlerType,
-		Model:           normalizedModel,
-		RequestedModel:  requestedModel,
-		Stream:          false,
-		RequestHeaders:  cloneHeader(opts.Headers),
-		ResponseHeaders: cloneHeader(rawResponseHeaders),
-		OriginalRequest: cloneBytes(originalRequest),
-		RequestBody:     cloneBytes(requestBody),
-		Body:            cloneBytes(body),
-		StatusCode:      statusCode,
-		Metadata:        opts.Metadata,
-	}, skipPluginID)
-	responseHeaders = downstreamHeadersAfterInterceptors(rawResponseHeaders, finalInterceptorHeaders(rawResponseHeaders, resp.Headers), passthrough)
-	if len(resp.Body) > 0 {
-		body = cloneBytes(resp.Body)
+	// Raw media needs its MIME type even when optional upstream headers are disabled.
+	if handlerType == "openai-compatible-speech" || handlerType == "openai-transcription" {
+		if contentType := rawResponseHeaders.Get("Content-Type"); contentType != "" {
+			if responseHeaders == nil {
+				responseHeaders = make(http.Header)
+			}
+			responseHeaders.Set("Content-Type", contentType)
+		}
 	}
 	return body, responseHeaders
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -18,21 +19,21 @@ func TestOpenAICompatUtilityOperationsPreservePayloadAndUsage(t *testing.T) {
 		path = r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
 		body = string(raw)
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"embedding":[0.1,1]}],"usage":{"prompt_tokens":2,"total_tokens":2}}`))
+		if path == "/embeddings" {
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"embedding":[0.1,1]}],"usage":{"prompt_tokens":2,"total_tokens":2}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"index":1,"relevance_score":0.9}],"meta":{"tokens":{"input_tokens":4,"output_tokens":1}}}`))
 	}))
 	defer server.Close()
 	executor := NewOpenAICompatExecutor("openai-compatible-nan", &config.Config{Payload: config.PayloadConfig{Override: []config.PayloadRule{{Models: []config.PayloadModelRule{{Name: "qwen3-embedding", Protocol: "openai"}}, Params: map[string]any{"dimensions": 4096}}}, Filter: []config.PayloadFilterRule{{Models: []config.PayloadModelRule{{Name: "qwen3-embedding", Protocol: "openai"}}, Params: []string{"drop_me"}}}}})
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "api_key": "secret"}}
 	response, err := executor.ExecuteEmbeddings(context.Background(), auth, cliproxyexecutor.Request{Model: "qwen3-embedding", Payload: []byte(`{"model":"alias","input":["a"],"encoding_format":"float","drop_me":true}`)}, cliproxyexecutor.Options{})
-	if err != nil || path != "/embeddings" || !bytesContains(body, `"model":"qwen3-embedding"`) || !bytesContains(body, `"dimensions":4096`) || bytesContains(body, "drop_me") || !bytesContains(string(response.Payload), `[0.1,1]`) {
+	if err != nil || path != "/embeddings" || !strings.Contains(body, `"model":"qwen3-embedding"`) || !strings.Contains(body, `"dimensions":4096`) || strings.Contains(body, "drop_me") || !strings.Contains(string(response.Payload), `[0.1,1]`) {
 		t.Fatalf("embeddings path=%s body=%s response=%s err=%v", path, body, response.Payload, err)
 	}
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
-		_, _ = w.Write([]byte(`{"results":[{"index":1,"relevance_score":0.9}],"meta":{"tokens":{"input_tokens":4,"output_tokens":1}}}`))
-	})
 	response, err = executor.ExecuteRerank(context.Background(), auth, cliproxyexecutor.Request{Model: "qwen3-reranker", Payload: []byte(`{"model":"alias","query":"q","documents":["a","b"]}`)}, cliproxyexecutor.Options{})
-	if err != nil || path != "/rerank" || !bytesContains(string(response.Payload), `"index":1`) {
+	if err != nil || path != "/rerank" || !strings.Contains(string(response.Payload), `"index":1`) {
 		t.Fatalf("rerank path=%s response=%s err=%v", path, response.Payload, err)
 	}
 	detail := parseRerankUsage([]byte(`{"meta":{"billed_units":{"total_tokens":7}}}`))
@@ -53,16 +54,4 @@ func TestOpenAICompatUtilityOperationsPreservePayloadAndUsage(t *testing.T) {
 	if malformed.TokensReported == nil || *malformed.TokensReported {
 		t.Fatalf("malformed usage reported=%v", malformed.TokensReported)
 	}
-}
-
-func bytesContains(value, part string) bool {
-	return len(value) >= len(part) && (value == part || len(part) == 0 || stringIndex(value, part) >= 0)
-}
-func stringIndex(value, part string) int {
-	for i := 0; i+len(part) <= len(value); i++ {
-		if value[i:i+len(part)] == part {
-			return i
-		}
-	}
-	return -1
 }

@@ -25,7 +25,8 @@ func (m *Manager) PeriodLedger() *PeriodLedger {
 	return m.periodLedger.Load()
 }
 
-func isNanPeriodAuth(auth *Auth) bool {
+// IsNanCompatibleAuth recognizes NaN independently of a renamed provider group.
+func IsNanCompatibleAuth(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
@@ -41,7 +42,7 @@ func isMonthlyCapResult(err *Error) bool {
 
 func (m *Manager) observePeriodResult(ctx context.Context, auth *Auth, result Result) {
 	ledger := m.PeriodLedger()
-	if ledger == nil || result.Success || !isNanPeriodAuth(auth) || !isMonthlyCapResult(result.Error) || result.UpstreamModel == "" {
+	if ledger == nil || result.Success || !IsNanCompatibleAuth(auth) || !isMonthlyCapResult(result.Error) || result.UpstreamModel == "" {
 		return
 	}
 	model := strings.TrimSpace(thinking.ParseSuffix(result.UpstreamModel).ModelName)
@@ -55,18 +56,36 @@ func (m *Manager) periodBlock(auth *Auth, model string) *periodExhaustedError {
 }
 
 func periodBlock(ledger *PeriodLedger, auth *Auth, model string) *periodExhaustedError {
-	if ledger == nil || !isNanPeriodAuth(auth) {
+	if ledger == nil || !IsNanCompatibleAuth(auth) {
 		return nil
 	}
 	model = strings.TrimSpace(thinking.ParseSuffix(model).ModelName)
-	if !ledger.IsBlocked(auth.Index, model) {
+	models := []string{model}
+	if model == "flux-2-klein" || model == "qwen-image-2.1" {
+		// NaN documents one image allowance for this pair; a different key's membership is unverified.
+		models = []string{"flux-2-klein", "qwen-image-2.1"}
+	}
+	var resetAt *time.Time
+	blocked, unknownReset := false, false
+	for _, subject := range models {
+		record, _, err := ledger.Get(auth.Index, subject)
+		if err != nil || !record.Blocked {
+			continue
+		}
+		blocked = true
+		if record.PeriodEnd == nil {
+			unknownReset = true
+		} else if resetAt == nil || record.PeriodEnd.After(*resetAt) {
+			resetAt = record.PeriodEnd
+		}
+	}
+	if !blocked {
 		return nil
 	}
-	record, _, err := ledger.Get(auth.Index, model)
-	if err != nil || !record.Blocked {
-		return nil
+	if unknownReset {
+		resetAt = nil
 	}
-	return &periodExhaustedError{resetAt: record.PeriodEnd}
+	return &periodExhaustedError{resetAt: resetAt}
 }
 
 type periodExhaustedError struct{ resetAt *time.Time }

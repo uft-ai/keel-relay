@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/tidwall/gjson"
 )
@@ -61,6 +62,20 @@ func (h *OpenAIAPIHandler) handleXAISpeech(c *gin.Context) {
 	}
 
 	requested := strings.TrimSpace(gjson.GetBytes(raw, "model").String())
+	if c.Request.URL.Path == "/v1/audio/speech" {
+		if info := registry.LookupModelInfo(requested); info != nil {
+			for _, operation := range info.Operations {
+				if operation == "speech" {
+					if input, voice := gjson.GetBytes(raw, "input"), gjson.GetBytes(raw, "voice"); input.Type != gjson.String || input.String() == "" || voice.Type != gjson.String || voice.String() == "" || gjson.GetBytes(raw, "stream").Bool() {
+						writeSpeechError(c, http.StatusBadRequest, "input and voice must be nonempty strings; speech does not support stream")
+						return
+					}
+					h.handleCompatibleAudio(c, raw, requested, "openai-compatible-speech")
+					return
+				}
+			}
+		}
+	}
 	model, ok := speechRoutingModel(requested)
 	if !ok {
 		writeSpeechError(c, http.StatusBadRequest, fmt.Sprintf("Model %s is not supported on /v1/audio/speech. Use %s.", requested, defaultXAISpeechModel))

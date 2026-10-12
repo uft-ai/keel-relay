@@ -655,6 +655,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				} else {
 					m.recordExecutionResult(execCtx, result, auth, false)
 				}
+				if IsNanCompatibleAuth(auth) && hasUpstreamExecutionAttempt(errExec) && nonReplayableMediaOperation(execOpts) {
+					return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
+				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
 						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)

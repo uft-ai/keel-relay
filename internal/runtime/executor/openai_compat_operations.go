@@ -28,6 +28,14 @@ func (e *OpenAICompatExecutor) ExecuteRerank(ctx context.Context, auth *cliproxy
 	return e.executeUtility(ctx, auth, req, opts, "/rerank", parseRerankUsage)
 }
 
+func (e *OpenAICompatExecutor) ExecuteSpeech(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return e.executeUtility(ctx, auth, req, opts, "/audio/speech", helps.ParseOpenAIUsage)
+}
+
+func (e *OpenAICompatExecutor) ExecuteTranscription(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return e.executeUtility(ctx, auth, req, opts, "/audio/transcriptions", helps.ParseOpenAIUsage)
+}
+
 func (e *OpenAICompatExecutor) executeUtility(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, endpoint string, parse func([]byte) usage.Detail) (resp cliproxyexecutor.Response, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
@@ -37,18 +45,29 @@ func (e *OpenAICompatExecutor) executeUtility(ctx context.Context, auth *cliprox
 	if baseURL == "" {
 		return resp, statusErr{code: http.StatusUnauthorized, msg: "missing provider baseURL"}
 	}
-	payload, errPayload := sjson.SetBytes(append([]byte(nil), req.Payload...), "model", baseModel)
-	if errPayload != nil {
-		return resp, errPayload
+	var payload []byte
+	contentType := "application/json"
+	if endpoint == "/audio/transcriptions" {
+		payload, contentType, err = prepareOpenAICompatImagesPayload(req.Payload, baseModel, opts.Headers.Get("Content-Type"), false)
+		if err == nil {
+			payload, contentType, err = helps.ApplyMediaPayloadConfig(e.cfg, e.Identifier(), baseModel, "openai", payload, contentType, req, opts)
+		}
+	} else {
+		payload, err = sjson.SetBytes(req.Payload, "model", baseModel)
+		if err == nil {
+			requestedModel := helps.PayloadRequestedModel(opts, req.Model)
+			payload = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, "openai", opts.SourceFormat.String(), "", payload, req.Payload, requestedModel, helps.PayloadRequestPath(opts), opts.Headers)
+		}
 	}
-	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
-	payload = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, "openai", opts.SourceFormat.String(), "", payload, req.Payload, requestedModel, helps.PayloadRequestPath(opts), opts.Headers)
+	if err != nil {
+		return resp, err
+	}
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, errRequest := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if errRequest != nil {
 		return resp, errRequest
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", contentType)
 	if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -77,12 +96,14 @@ func (e *OpenAICompatExecutor) executeUtility(ctx context.Context, auth *cliprox
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 	body, errRead := io.ReadAll(httpResp.Body)
 	if errRead != nil {
+		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		return resp, errRead
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		return resp, newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, body)
 	}
+	reporter.ObserveResponseModel(body)
 	reporter.Publish(ctx, parse(body))
 	return cliproxyexecutor.Response{Payload: body, Headers: httpResp.Header.Clone()}, nil
 }

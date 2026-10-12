@@ -839,7 +839,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		} else {
 			if modelKey != "" {
-				if !shouldSkipCredentialCooldown(result.Error) && !(m.PeriodLedger() != nil && isNanPeriodAuth(auth) && isMonthlyCapResult(result.Error)) {
+				if !shouldSkipCredentialCooldown(result.Error) && !(m.PeriodLedger() != nil && IsNanCompatibleAuth(auth) && isMonthlyCapResult(result.Error)) {
 					disableCooling := m.cooldownDisabledForAuth(auth)
 					if result.Error != nil && result.Error.Code == ErrorCodeForceCooldown {
 						disableCooling = false

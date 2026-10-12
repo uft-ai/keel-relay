@@ -92,6 +92,10 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		return e.ExecuteEmbeddings(ctx, auth, req, opts)
 	case "openai-rerank":
 		return e.ExecuteRerank(ctx, auth, req, opts)
+	case "openai-compatible-speech":
+		return e.ExecuteSpeech(ctx, auth, req, opts)
+	case "openai-transcription":
+		return e.ExecuteTranscription(ctx, auth, req, opts)
 	}
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
@@ -258,6 +262,11 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 	if errPrepare != nil {
 		return resp, errPrepare
 	}
+	if cliproxyauth.IsNanCompatibleAuth(auth) {
+		if errValidate := helps.ValidateNanImagesPayload(payload, contentType); errValidate != nil {
+			return resp, statusErr{code: http.StatusBadRequest, msg: errValidate.Error()}
+		}
+	}
 	reporter.SetTranslatedReasoningEffort(payload, "openai")
 
 	url := strings.TrimSuffix(baseURL, "/") + endpointPath
@@ -331,6 +340,9 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
+		if cliproxyauth.IsNanCompatibleAuth(auth) {
+			return nil, statusErr{code: http.StatusBadRequest, msg: "NaN image operations do not support stream"}
+		}
 		return e.executeImagesStream(ctx, auth, req, opts, endpointPath)
 	}
 	if openAICompatNativeResponsesRequested(req, opts) || openAICompatNativeCompletionsRequested(req, opts) {

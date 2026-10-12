@@ -27,6 +27,32 @@ func (e *periodTestExecutor) Execute(_ context.Context, _ *Auth, req cliproxyexe
 	return cliproxyexecutor.Response{Payload: []byte(`{}`)}, nil
 }
 
+type periodMediaExecutor struct{ periodTestExecutor }
+
+func (e *periodMediaExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	cliproxyexecutor.MarkUpstreamAttempt(ctx)
+	return e.periodTestExecutor.Execute(ctx, auth, req, opts)
+}
+
+func (e *periodMediaExecutor) ExecuteTranscription(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return e.Execute(ctx, auth, req, opts)
+}
+
+func TestNanMediaTimeoutDoesNotReplay(t *testing.T) {
+	m, base, auth := periodManagerFixture(t, t.TempDir())
+	cfg := m.runtimeConfigSnapshot()
+	cfg.OpenAICompatibility[0].Models = []internalconfig.OpenAICompatibilityModel{{Name: "whisper", Alias: "qwen", Operations: []string{"transcription"}}}
+	m.SetConfig(cfg)
+	executor := &periodMediaExecutor{periodTestExecutor: *base}
+	executor.failure = &Error{HTTPStatus: 524, Message: "upstream may have completed"}
+	m.RegisterExecutor(executor)
+	_, err := m.Execute(t.Context(), []string{auth.Provider}, cliproxyexecutor.Request{Model: "nan/qwen"}, cliproxyexecutor.Options{SourceFormat: "openai-transcription"})
+	var status interface{ StatusCode() int }
+	if !errors.As(err, &status) || status.StatusCode() != 524 || len(executor.requests) != 1 {
+		t.Fatalf("media replay: calls=%d, error=%v", len(executor.requests), err)
+	}
+}
+
 func (e *periodTestExecutor) ExecuteStream(_ context.Context, _ *Auth, req cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	e.requests = append(e.requests, req)
 	if !e.late && e.failure != nil {
@@ -168,5 +194,58 @@ func TestPeriodManagerDoesNotGuessMonthlyExhaustion(t *testing.T) {
 				t.Fatal("unconfirmed monthly exhaustion created a durable block")
 			}
 		})
+	}
+}
+
+func TestNanImagePoolCannotBypassPersistedExhaustion(t *testing.T) {
+	for _, source := range []string{"flux-2-klein", "qwen-image-2.1"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			m, _, auth := periodManagerFixture(t, dir)
+			m.observePeriodResult(t.Context(), auth, Result{UpstreamModel: source, Error: &Error{HTTPStatus: 402, Code: "monthly_cap_reached"}})
+			if rows := m.PeriodLedger().List(); len(rows) != 1 || rows[0].Model != source {
+				t.Fatal("pool lookup must preserve the actual exhaustion evidence without duplicate writes")
+			}
+			m, _, auth = periodManagerFixture(t, dir)
+			for _, model := range []string{"flux-2-klein", "qwen-image-2.1"} {
+				if block := m.periodBlock(auth, model); block == nil || block.resetAt != nil {
+					t.Fatalf("same-key pool bypass after restart: %s", model)
+				}
+			}
+			if m.periodBlock(auth, "qwen3.8-flash") != nil {
+				t.Fatal("image pool blocked chat")
+			}
+			other := auth.Clone()
+			other.Index = "2222222222222222"
+			if m.periodBlock(other, "flux-2-klein") != nil {
+				t.Fatal("different key was assigned an unverified shared allowance")
+			}
+		})
+	}
+}
+
+func TestNanImagePoolNeedsEveryBlockedRecordToRenew(t *testing.T) {
+	now := fixedNow()()
+	old := now.Add(-time.Hour)
+	store := &memoryPeriodStore{records: []PeriodRecord{
+		{AuthIndex: "1111111111111111", Model: "flux-2-klein", Blocked: true, Version: 1, PeriodEnd: &old, ExhaustedAt: old.Add(-time.Hour)},
+		{AuthIndex: "1111111111111111", Model: "qwen-image-2.1", Blocked: true, Version: 1, PeriodEnd: &old, ExhaustedAt: old.Add(-time.Hour)},
+	}}
+	ledger, err := NewPeriodLedger(t.Context(), store, fixedNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := &Auth{Index: "1111111111111111", Attributes: map[string]string{"base_url": "https://api.nan.builders/v1"}}
+	end, remaining := now.Add(30*24*time.Hour), int64(10)
+	for index, model := range []string{"flux-2-klein", "qwen-image-2.1"} {
+		_, err := ledger.ApplyObservation(t.Context(), PeriodObservation{ObservationID: model, BasedOnVersion: 1, State: "available", AuthIndex: auth.Index, Model: model, PeriodEnd: &end, Remaining: &remaining, NotBefore: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []string{"flux-2-klein", "qwen-image-2.1"} {
+			if blocked := periodBlock(ledger, auth, target) != nil; blocked != (index == 0) {
+				t.Fatalf("pool renewal ignored a blocked record: target=%s blocked=%v", target, blocked)
+			}
+		}
 	}
 }
