@@ -298,7 +298,9 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	apiRequestSource := w.extractAPIRequestSource(c)
 	apiResponseSource := w.extractAPIResponseSource(c)
 	apiWebsocketTimelineSource := w.extractAPIWebsocketTimelineSource(c)
-	if !w.logger.IsEnabled() && !forceLog {
+	// A stream log that started while capture was on is finished even when capture
+	// was turned off since; skipping it would leave its goroutines and spool files.
+	if !w.logger.IsEnabled() && !forceLog && w.streamWriter == nil {
 		cleanupFileBodySources(websocketTimelineSource, apiRequestSource, apiResponseSource, apiWebsocketTimelineSource)
 		return nil
 	}

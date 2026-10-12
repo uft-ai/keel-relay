@@ -6,6 +6,7 @@ package logging
 import (
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
@@ -135,15 +136,16 @@ type StreamingLogWriter interface {
 // It provides file-based logging functionality for HTTP requests and responses.
 type FileRequestLogger struct {
 	// enabled indicates whether request logging is currently enabled.
-	enabled bool
+	// Config reloads change it while requests read it.
+	enabled atomic.Bool
 
 	// logsDir is the directory where log files are stored.
 	logsDir string
 
 	// errorLogsMaxFiles limits the number of error log files retained.
-	errorLogsMaxFiles int
+	errorLogsMaxFiles atomic.Int64
 
-	homeEnabled bool
+	homeEnabled atomic.Bool
 }
 
 // NewFileRequestLogger creates a new file-based request logger.
@@ -165,12 +167,10 @@ func NewFileRequestLogger(enabled bool, logsDir string, configDir string, errorL
 			logsDir = filepath.Join(configDir, logsDir)
 		}
 	}
-	return &FileRequestLogger{
-		enabled:           enabled,
-		logsDir:           logsDir,
-		errorLogsMaxFiles: errorLogsMaxFiles,
-		homeEnabled:       false,
-	}
+	logger := &FileRequestLogger{logsDir: logsDir}
+	logger.enabled.Store(enabled)
+	logger.errorLogsMaxFiles.Store(int64(errorLogsMaxFiles))
+	return logger
 }
 
 // IsEnabled returns whether request logging is currently enabled.
@@ -178,7 +178,7 @@ func NewFileRequestLogger(enabled bool, logsDir string, configDir string, errorL
 // Returns:
 //   - bool: True if logging is enabled, false otherwise
 func (l *FileRequestLogger) IsEnabled() bool {
-	return l.enabled
+	return l.enabled.Load()
 }
 
 // SetEnabled updates the request logging enabled state.
@@ -187,12 +187,12 @@ func (l *FileRequestLogger) IsEnabled() bool {
 // Parameters:
 //   - enabled: Whether request logging should be enabled
 func (l *FileRequestLogger) SetEnabled(enabled bool) {
-	l.enabled = enabled
+	l.enabled.Store(enabled)
 }
 
 // SetErrorLogsMaxFiles updates the maximum number of error log files to retain.
 func (l *FileRequestLogger) SetErrorLogsMaxFiles(maxFiles int) {
-	l.errorLogsMaxFiles = maxFiles
+	l.errorLogsMaxFiles.Store(int64(maxFiles))
 }
 
 // NewFileBodySource creates a temp-backed source under the request log directory.

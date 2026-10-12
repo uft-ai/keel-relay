@@ -49,7 +49,7 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 }
 
 func (l *FileRequestLogger) forwardRequestLogToHome(ctx context.Context, headers map[string][]string, requestID string, logText string) error {
-	if l == nil || !l.homeEnabled {
+	if l == nil || !l.homeEnabled.Load() {
 		return nil
 	}
 	client := currentHomeRequestLogClient()
@@ -77,7 +77,7 @@ func (l *FileRequestLogger) SetHomeEnabled(enabled bool) {
 	if l == nil {
 		return
 	}
-	l.homeEnabled = enabled
+	l.homeEnabled.Store(enabled)
 }
 
 type homeStreamingLogWriter struct {

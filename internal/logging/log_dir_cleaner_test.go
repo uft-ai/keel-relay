@@ -156,7 +156,7 @@ func TestErrorLogCountCleanerProtectsActiveFinalization(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeLogFile(t, filepath.Join(dir, "error-v1-chat-2026-10-12T110000-deadbeef.log"), 16, old.Add(24*time.Hour))
-	logger := &FileRequestLogger{logsDir: dir, errorLogsMaxFiles: 1}
+	logger := NewFileRequestLogger(false, dir, "", 1)
 	if err := logger.cleanupOldErrorLogs(); err != nil {
 		t.Fatal(err)
 	}
