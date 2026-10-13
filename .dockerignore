@@ -20,6 +20,16 @@ auths
 logs
 conv
 config.yaml
+config.yaml.bak
+period-exhaustion
+pgstore
+gitstore
+objectstore
+
+# Local environment files, at any depth
+**/.env
+**/.env.*
+**/*.runtime.env
 
 # Development/editor
 bin

@@ -4,7 +4,12 @@ cli-proxy-api
 
 # Configuration
 config.yaml
+config.yaml.bak
 .env
+.env.*
+!.env.example
+!.env.cluster.example
+*.runtime.env
 
 # Generated content
 bin/*
@@ -19,6 +24,7 @@ examples/plugin/bin/*
 pgstore/*
 gitstore/*
 objectstore/*
+period-exhaustion/
 
 # Static assets
 static/*
