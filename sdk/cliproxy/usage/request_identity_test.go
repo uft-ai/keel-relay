@@ -104,6 +104,64 @@ func TestRecordIdentityWithoutASnapshotStillReadsGin(t *testing.T) {
 	}
 }
 
+// delayedSink resolves the record the way plugin sinks do, but only after the
+// test releases it, so the request's Gin context has moved on by then.
+type delayedSink struct {
+	release chan struct{}
+	records chan Record
+}
+
+func (s *delayedSink) HandleUsage(ctx context.Context, record Record) {
+	<-s.release
+	s.records <- ResolveRecordIdentity(ctx, record)
+}
+
+func publishToDelayedSink(t *testing.T, ctx context.Context, gin *reusedGin, record Record) Record {
+	t.Helper()
+	mgr := NewManager(10)
+	t.Cleanup(mgr.Stop)
+	sink := &delayedSink{release: make(chan struct{}), records: make(chan Record, 1)}
+	mgr.Register(sink)
+	mgr.Publish(ctx, record)
+	gin.values = map[string]any{"userApiKey": "sk-next", "accessProvider": "custom"}
+	close(sink.release)
+	select {
+	case got := <-sink.records:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for usage record")
+		return Record{}
+	}
+}
+
+func TestPublishFreezesAnEmptyIdentityForLateSinks(t *testing.T) {
+	ctx, gin := ginContext(map[string]any{})
+
+	got := publishToDelayedSink(t, ctx, gin, Record{Provider: "codex"})
+	if got.APIKey != "" || got.AccessProvider != "" || got.IsNativeKey {
+		t.Fatalf("record = key %q provider %q native %v, want the unauthenticated request's empty identity", got.APIKey, got.AccessProvider, got.IsNativeKey)
+	}
+}
+
+func TestPublishFreezesTheResolvedIdentityForLateSinks(t *testing.T) {
+	ctx, gin := ginContext(map[string]any{"userApiKey": "sk-first", "accessProvider": "config-inline"})
+
+	got := publishToDelayedSink(t, ctx, gin, Record{Provider: "codex"})
+	if got.APIKey != "sk-first" || got.AccessProvider != "config-inline" || !got.IsNativeKey {
+		t.Fatalf("record = key %q provider %q native %v, want the publishing request's identity", got.APIKey, got.AccessProvider, got.IsNativeKey)
+	}
+}
+
+func TestPublishKeepsAnExplicitNativeChoiceForLateSinks(t *testing.T) {
+	ctx, gin := ginContext(map[string]any{"userApiKey": "sk-first", "accessProvider": "config-inline"})
+	ctx = WithIsNativeKey(ctx, false)
+
+	got := publishToDelayedSink(t, ctx, gin, Record{Provider: "codex"})
+	if got.APIKey != "sk-first" || got.AccessProvider != "config-inline" || got.IsNativeKey {
+		t.Fatalf("record = key %q provider %q native %v, want explicit native=false kept", got.APIKey, got.AccessProvider, got.IsNativeKey)
+	}
+}
+
 func TestRecordIdentityKeepsACompleteRecord(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "gin", releasedGin{t})
 	record := ResolveRecordIdentity(ctx, Record{APIKey: "sk-set", AccessProvider: "custom", IsNativeKey: true})

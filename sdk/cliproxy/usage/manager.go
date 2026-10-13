@@ -608,6 +608,19 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		}
 	}
 	record = ResolveRecordIdentity(ctx, record)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, snapshot := ctx.Value(requestIdentityContextKey{}).(requestIdentity); !snapshot {
+		// Sinks run later on the worker. Freeze what was resolved here so they
+		// never read a Gin context that may already serve another request.
+		ctx = context.WithValue(ctx, requestIdentityContextKey{}, requestIdentity{
+			apiKey:         record.APIKey,
+			accessProvider: record.AccessProvider,
+			isNativeKey:    record.IsNativeKey,
+			nativeKeySet:   true,
+		})
+	}
 	// ensure worker is running even if Start was not called explicitly
 	m.Start(context.Background())
 	m.mu.Lock()
