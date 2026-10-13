@@ -933,6 +933,34 @@ func TestUsageAdapterPropagatesNativeKeyAndAccessProvider(t *testing.T) {
 	if recCtx.AccessProvider != "config-inline" {
 		t.Fatalf("recCtx.AccessProvider = %q, want config-inline", recCtx.AccessProvider)
 	}
+
+	// 3. A request snapshot outlives the pooled Gin context, empty identity included.
+	for _, tc := range []struct {
+		name   string
+		values map[string]any
+		key    string
+		access string
+		native bool
+	}{
+		{"authenticated", map[string]any{"userApiKey": "sk-first", "accessProvider": "config-inline"}, "sk-first", "config-inline", true},
+		{"unauthenticated", map[string]any{}, "", "", false},
+	} {
+		gin := &reusedGinValues{values: tc.values}
+		snapshot := coreusage.WithRequestIdentity(context.WithValue(context.Background(), "gin", gin), nil)
+		gin.values = map[string]any{"userApiKey": "sk-next", "accessProvider": "config-api-key"}
+		adapter.HandleUsage(snapshot, coreusage.Record{Provider: "test-provider", Model: "test-model"})
+		got := <-plugin.captured
+		if got.APIKey != tc.key || got.AccessProvider != tc.access || got.IsNativeKey != tc.native {
+			t.Fatalf("%s: key %q provider %q native %v, want %q %q %v", tc.name, got.APIKey, got.AccessProvider, got.IsNativeKey, tc.key, tc.access, tc.native)
+		}
+	}
+}
+
+type reusedGinValues struct{ values map[string]any }
+
+func (g *reusedGinValues) Get(key string) (any, bool) {
+	value, ok := g.values[key]
+	return value, ok
 }
 
 func TestExecutorAdapterExecuteAttributesResponsesUsageToSelectedAuth(t *testing.T) {

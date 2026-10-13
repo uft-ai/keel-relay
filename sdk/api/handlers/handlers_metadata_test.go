@@ -10,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coresession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"golang.org/x/net/context"
 )
@@ -59,6 +60,32 @@ func TestGetContextWithCancelCapturesResolvedClientIP(t *testing.T) {
 	}
 	if metadata.ClientIP != "192.0.2.10" {
 		t.Fatalf("ClientIP = %q, want direct peer IP", metadata.ClientIP)
+	}
+}
+
+func TestGetContextWithCancelSnapshotsTheClientIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	requestCtx := coreusage.WithAPIKey(request.Context(), "sk-client")
+	requestCtx = coreusage.WithAccessProvider(requestCtx, "config-inline")
+	requestCtx = coreusage.WithIsNativeKey(requestCtx, false)
+	ginCtx.Request = request.WithContext(requestCtx)
+	ginCtx.Set("userApiKey", "sk-client")
+	ginCtx.Set("accessProvider", "config-inline")
+
+	handler := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
+	// Responses streaming passes a detached parent; the request's values must still count.
+	ctx, cancel := handler.GetContextWithCancel(nil, ginCtx, context.Background())
+	defer cancel()
+	ginCtx.Keys = map[string]any{"userApiKey": "sk-next-request", "accessProvider": "custom"}
+
+	record := coreusage.ResolveRecordIdentity(ctx, coreusage.Record{})
+	if record.APIKey != "sk-client" || record.AccessProvider != "config-inline" {
+		t.Fatalf("identity = %q %q, want the original request's", record.APIKey, record.AccessProvider)
+	}
+	if record.IsNativeKey {
+		t.Fatal("explicit native=false from the request was lost")
 	}
 }
 

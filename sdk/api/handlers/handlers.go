@@ -587,6 +587,10 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		}()
 	}
 	newCtx = context.WithValue(newCtx, "gin", c)
+	if c != nil {
+		// Usage is published after the response; Gin reuses c by then.
+		newCtx = coreusage.WithRequestIdentity(newCtx, requestCtx)
+	}
 	newCtx = context.WithValue(newCtx, "handler", handler)
 	return newCtx, func(params ...interface{}) {
 		if c != nil {

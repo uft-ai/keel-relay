@@ -53,18 +53,9 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		authType = "unknown"
 	}
 	apiKey := strings.TrimSpace(record.APIKey)
-	accessProvider := strings.TrimSpace(record.AccessProvider)
-	if accessProvider == "" {
-		accessProvider = strings.TrimSpace(coreusage.AccessProviderFromContext(ctx))
-	}
-	isNativeKey := record.IsNativeKey
-	if !isNativeKey {
-		if nativeExplicit, ok := coreusage.IsNativeKeyFromContext(ctx); ok {
-			isNativeKey = nativeExplicit
-		} else if accessProvider != "" {
-			isNativeKey = coreusage.IsNativeAccessProvider(accessProvider)
-		}
-	}
+	identity := coreusage.ResolveRecordIdentity(ctx, record)
+	accessProvider := strings.TrimSpace(identity.AccessProvider)
+	isNativeKey := identity.IsNativeKey
 	requestID := strings.TrimSpace(internallogging.GetRequestID(ctx))
 	traceID := strings.TrimSpace(record.TraceID)
 	if traceID == "" {

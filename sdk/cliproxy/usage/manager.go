@@ -386,6 +386,95 @@ func IsNativeAccessProvider(provider string) bool {
 	return strings.EqualFold(p, "config-inline") || strings.EqualFold(p, "config-api-key")
 }
 
+type requestIdentityContextKey struct{}
+
+// requestIdentity is the client identity resolved on the request goroutine.
+// Empty values are real answers: an unauthenticated request has no key.
+type requestIdentity struct {
+	apiKey         string
+	accessProvider string
+	isNativeKey    bool
+	nativeKeySet   bool
+}
+
+// WithRequestIdentity resolves the client identity once and stores it, empty
+// values included. Call it on the request goroutine. Values in ctx win, then
+// values in request (a handler may run on a detached parent), then the Gin
+// context. Usage publication is asynchronous and must not read the Gin context
+// after the request ends, because Gin reuses it for the next request.
+func WithRequestIdentity(ctx, request context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	identity := requestIdentity{}
+	var found bool
+	if identity.apiKey, found = typedString(ctx, apiKeyContextKey{}); !found {
+		if identity.apiKey, found = typedString(request, apiKeyContextKey{}); !found {
+			identity.apiKey = APIKeyFromContext(ctx)
+		}
+	}
+	if identity.accessProvider, found = typedString(ctx, accessProviderContextKey{}); !found {
+		if identity.accessProvider, found = typedString(request, accessProviderContextKey{}); !found {
+			identity.accessProvider = AccessProviderFromContext(ctx)
+		}
+	}
+	if identity.isNativeKey, identity.nativeKeySet = IsNativeKeyFromContext(ctx); !identity.nativeKeySet {
+		identity.isNativeKey, identity.nativeKeySet = IsNativeKeyFromContext(request)
+	}
+	return context.WithValue(ctx, requestIdentityContextKey{}, identity)
+}
+
+// ResolveRecordIdentity fills a record's missing client identity for usage
+// sinks. Typed values in ctx win, then the request snapshot. Only a context
+// without a snapshot falls back to the Gin context, as before.
+func ResolveRecordIdentity(ctx context.Context, record Record) Record {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	identity, snapshot := ctx.Value(requestIdentityContextKey{}).(requestIdentity)
+	if strings.TrimSpace(record.APIKey) == "" {
+		if key, found := typedString(ctx, apiKeyContextKey{}); found {
+			record.APIKey = key
+		} else if snapshot {
+			record.APIKey = identity.apiKey
+		} else {
+			record.APIKey = APIKeyFromContext(ctx)
+		}
+	}
+	if strings.TrimSpace(record.AccessProvider) == "" {
+		if provider, found := typedString(ctx, accessProviderContextKey{}); found {
+			record.AccessProvider = provider
+		} else if snapshot {
+			record.AccessProvider = identity.accessProvider
+		} else {
+			record.AccessProvider = AccessProviderFromContext(ctx)
+		}
+	}
+	if !record.IsNativeKey {
+		if native, found := IsNativeKeyFromContext(ctx); found {
+			record.IsNativeKey = native
+		} else if snapshot && identity.nativeKeySet {
+			record.IsNativeKey = identity.isNativeKey
+		} else if record.AccessProvider != "" {
+			record.IsNativeKey = IsNativeAccessProvider(record.AccessProvider)
+		}
+	}
+	return record
+}
+
+func typedString(ctx context.Context, key any) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	switch value := ctx.Value(key).(type) {
+	case string:
+		return strings.TrimSpace(value), true
+	case []byte:
+		return strings.TrimSpace(string(value)), true
+	}
+	return "", false
+}
+
 // GenerateFlag returns a pointer suitable for Record.Generate.
 func GenerateFlag(generate bool) *bool {
 	return &generate
@@ -518,23 +607,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 			record.TraceID = trID
 		}
 	}
-	if strings.TrimSpace(record.APIKey) == "" {
-		if key := APIKeyFromContext(ctx); key != "" {
-			record.APIKey = key
-		}
-	}
-	if strings.TrimSpace(record.AccessProvider) == "" {
-		if provider := AccessProviderFromContext(ctx); provider != "" {
-			record.AccessProvider = provider
-		}
-	}
-	if !record.IsNativeKey {
-		if nativeExplicit, ok := IsNativeKeyFromContext(ctx); ok {
-			record.IsNativeKey = nativeExplicit
-		} else if record.AccessProvider != "" {
-			record.IsNativeKey = IsNativeAccessProvider(record.AccessProvider)
-		}
-	}
+	record = ResolveRecordIdentity(ctx, record)
 	// ensure worker is running even if Start was not called explicitly
 	m.Start(context.Background())
 	m.mu.Lock()
