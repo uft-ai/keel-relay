@@ -18,6 +18,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"github.com/tidwall/gjson"
 )
@@ -667,5 +669,34 @@ func TestSSEFrameAccumulatorKeepsMultipleFramesDistinct(t *testing.T) {
 	}
 	if string(frames[0]) != first || string(frames[1]) != second {
 		t.Fatalf("frames were overwritten during buffer compaction: %q", frames)
+	}
+}
+
+// imageCaptureExecutor answers an image call with a fixed provider body.
+type imageCaptureExecutor struct{ speechCaptureExecutor }
+
+func (e *imageCaptureExecutor) Identifier() string { return "openai-compatible-images" }
+func (e *imageCaptureExecutor) Execute(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{Payload: []byte(`{"created":1,"data":[{"b64_json":"AA=="}],"provider_extension":"kept"}`)}, nil
+}
+
+// A NaN image answer passes through unchanged, including fields the generic
+// conversion does not know. The official host selects that rule; the entry name
+// does not matter. The generic conversion is not asserted here.
+func TestNanImagesResponseKeepsProviderFields(t *testing.T) {
+	executor := &imageCaptureExecutor{}
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(executor)
+	auth := &coreauth.Auth{ID: t.Name(), Provider: executor.Identifier(), Status: coreauth.StatusActive, Attributes: map[string]string{"base_url": "https://api.nan.builders/v1"}}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "host-test-image", Type: registry.OpenAIImageModelType}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	manager.RefreshSchedulerEntry(auth.ID)
+	handler := NewOpenAIAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager))
+	resp := performImagesEndpointRequest(t, imagesGenerationsPath, "application/json", strings.NewReader(`{"model":"host-test-image","prompt":"draw"}`), handler.ImagesGenerations)
+	if resp.Code != http.StatusOK || gjson.Get(resp.Body.String(), "provider_extension").String() != "kept" {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body)
 	}
 }

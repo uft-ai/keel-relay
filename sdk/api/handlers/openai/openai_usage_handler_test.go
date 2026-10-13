@@ -45,6 +45,13 @@ func TestUsageHistorySelectsCredentialWithoutMutatingModelAvailability(t *testin
 	if got := call(""); got.Code != 404 {
 		t.Fatalf("empty provider status=%d", got.Code)
 	}
+	// The name is a label: an entry named nan on another host has no NaN history.
+	if _, err := m.Register(t.Context(), &coreauth.Auth{ID: "generic", Provider: e.Identifier(), Attributes: map[string]string{"api_key": "fixture-generic", "base_url": "http://172.31.77.10:8090/v1", "compat_name": "nan"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(""); got.Code != 404 || !strings.Contains(got.Body.String(), "usage_not_configured") || e.called != 0 {
+		t.Fatalf("generic history status=%d calls=%d", got.Code, e.called)
+	}
 	first, err := m.Register(t.Context(), &coreauth.Auth{ID: "one", Provider: e.Identifier(), Attributes: map[string]string{"api_key": "fixture-one", "base_url": "https://api.nan.builders/v1", "compat_name": "renamed"}, ModelStates: map[string]*coreauth.ModelState{"qwen": {Unavailable: true}}})
 	if err != nil {
 		t.Fatal(err)

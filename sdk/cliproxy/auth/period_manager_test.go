@@ -224,6 +224,51 @@ func TestNanImagePoolCannotBypassPersistedExhaustion(t *testing.T) {
 	}
 }
 
+// Only the endpoint host selects NaN rules. The name is an operator label.
+func TestNanIdentityFollowsHostNotName(t *testing.T) {
+	for _, tc := range []struct {
+		name, baseURL string
+		nan           bool
+	}{
+		{"nan", "http://172.31.77.10:8090/v1", false},
+		{"nan", "https://api.nan.builders.example/v1", false},
+		{"renamed", "https://API.nan.builders/v1", true},
+	} {
+		auth := &Auth{Attributes: map[string]string{"compat_name": tc.name, "base_url": tc.baseURL}}
+		if IsNanCompatibleAuth(auth) != tc.nan {
+			t.Fatalf("%s at %s: nan=%v", tc.name, tc.baseURL, !tc.nan)
+		}
+	}
+}
+
+// A generic provider honors an accepted blocked record, but a generic 402 is not
+// proof of a monthly cap, and NaN's image pair is not shared.
+func TestPeriodBlockAppliesToGenericProviderWithoutNanRules(t *testing.T) {
+	m, executor, auth := periodManagerFixture(t, t.TempDir())
+	auth.Attributes["base_url"] = "http://172.31.77.10:8090/v1"
+	if IsNanCompatibleAuth(auth) {
+		t.Fatal("fixture is still NaN")
+	}
+	m.SetRetryConfig(0, 0, 1)
+	executor.failure = &Error{HTTPStatus: 402, Code: "monthly_cap_reached"}
+	m.observePeriodResult(t.Context(), auth, Result{UpstreamModel: "qwen3.6", Error: executor.failure})
+	if rows := m.PeriodLedger().List(); len(rows) != 0 {
+		t.Fatalf("generic 402 created a record: %+v", rows)
+	}
+	now := time.Now().UTC()
+	for _, model := range []string{"qwen3.6", "flux-2-klein"} {
+		if _, err := m.PeriodLedger().ApplyObservation(t.Context(), PeriodObservation{ObservationID: model, State: "exhausted", AuthIndex: auth.Index, Model: model, NotBefore: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if block := m.periodBlock(auth, "qwen3.6"); block == nil {
+		t.Fatal("generic key ignored its blocked record")
+	}
+	if m.periodBlock(auth, "other") != nil || m.periodBlock(auth, "qwen-image-2.1") != nil {
+		t.Fatal("generic block spread beyond its own record")
+	}
+}
+
 func TestNanImagePoolNeedsEveryBlockedRecordToRenew(t *testing.T) {
 	now := fixedNow()()
 	old := now.Add(-time.Hour)

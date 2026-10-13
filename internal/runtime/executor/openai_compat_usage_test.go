@@ -26,7 +26,7 @@ func TestOpenAICompatUsageHistoryIsNotInference(t *testing.T) {
 			}))
 			defer server.Close()
 			e := NewOpenAICompatExecutor("openai-compatible-nan", &config.Config{})
-			auth := &cliproxyauth.Auth{Provider: e.Identifier(), Attributes: map[string]string{"api_key": "fixture-key", "base_url": server.URL + "/v1", "compat_name": "nan"}}
+			auth := &cliproxyauth.Auth{Provider: e.Identifier(), Attributes: map[string]string{"api_key": "fixture-key", "base_url": server.URL + "/v1", "compat_name": "history"}}
 			ctx, capture := nativeUsageCapture(t)
 			response, err := e.ReadUsage(ctx, auth, query)
 			if err != nil || response.StatusCode != status || string(response.Payload) != body || response.Headers.Get("Retry-After") != "Wed, 14 Oct 2026 00:00:00 GMT" {

@@ -25,14 +25,14 @@ func (m *Manager) PeriodLedger() *PeriodLedger {
 	return m.periodLedger.Load()
 }
 
-// IsNanCompatibleAuth recognizes NaN independently of a renamed provider group.
+// IsNanCompatibleAuth recognizes NaN by its endpoint host only. The provider name
+// is an operator label: an entry named "nan" elsewhere is a generic provider.
 func IsNanCompatibleAuth(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
 	u, err := url.Parse(auth.Attributes["base_url"])
-	return (err == nil && strings.EqualFold(u.Hostname(), "api.nan.builders")) ||
-		strings.EqualFold(strings.TrimSpace(auth.Attributes["compat_name"]), "nan")
+	return err == nil && strings.EqualFold(u.Hostname(), "api.nan.builders")
 }
 
 func isMonthlyCapResult(err *Error) bool {
@@ -56,12 +56,14 @@ func (m *Manager) periodBlock(auth *Auth, model string) *periodExhaustedError {
 }
 
 func periodBlock(ledger *PeriodLedger, auth *Auth, model string) *periodExhaustedError {
-	if ledger == nil || !IsNanCompatibleAuth(auth) {
+	if ledger == nil || auth == nil {
 		return nil
 	}
+	// A blocked record exists only after a provider rule or an accepted observation
+	// created it, so every provider honors it.
 	model = strings.TrimSpace(thinking.ParseSuffix(model).ModelName)
 	models := []string{model}
-	if model == "flux-2-klein" || model == "qwen-image-2.1" {
+	if IsNanCompatibleAuth(auth) && (model == "flux-2-klein" || model == "qwen-image-2.1") {
 		// NaN documents one image allowance for this pair; a different key's membership is unverified.
 		models = []string{"flux-2-klein", "qwen-image-2.1"}
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -106,9 +105,6 @@ func (h *Handler) periodSubjectAllowed(authIndex, model string) bool {
 		return false
 	}
 	for _, provider := range h.openAICompatibilityWithAuthIndex() {
-		if !nanPeriodProvider(provider) {
-			continue
-		}
 		for _, key := range provider.APIKeyEntries {
 			if !strings.EqualFold(strings.TrimSpace(key.AuthIndex), authIndex) {
 				continue
@@ -121,14 +117,6 @@ func (h *Handler) periodSubjectAllowed(authIndex, model string) bool {
 		}
 	}
 	return false
-}
-
-func nanPeriodProvider(provider openAICompatibilityWithAuthIndex) bool {
-	if strings.EqualFold(strings.TrimSpace(provider.Name), "nan") {
-		return true
-	}
-	parsed, err := url.Parse(provider.BaseURL)
-	return err == nil && strings.EqualFold(parsed.Hostname(), "api.nan.builders")
 }
 
 func publicPeriodRecord(record coreauth.PeriodRecord) gin.H {
