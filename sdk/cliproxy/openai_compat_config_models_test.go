@@ -76,3 +76,17 @@ func joinModalities(modalities []string) string {
 	}
 	return out
 }
+
+func TestBuildOpenAICompatibilityConfigModelsSkipsDisabledRows(t *testing.T) {
+	compat := &config.OpenAICompatibility{
+		Name: "compat",
+		Models: []config.OpenAICompatibilityModel{
+			{Name: "upstream", Alias: "off", Disabled: true},
+			{Name: "upstream", Alias: "on"},
+		},
+	}
+	models := buildOpenAICompatibilityConfigModels(compat)
+	if len(models) != 1 || models[0].ID != "on" {
+		t.Fatalf("catalog = %+v, want only the enabled row", models)
+	}
+}

@@ -23,10 +23,10 @@ func ShouldNormalizeOpenAIToolResultsForModel(compat *config.OpenAICompatibility
 		return false
 	}
 
-	if normalize, matched := openAICompatibilityModelExcludesImages(compat.Models, upstreamModel); matched {
+	if normalize, matched := openAICompatibilityModelExcludesImages(config.EnabledOpenAICompatModels(compat.Models), upstreamModel); matched {
 		return normalize
 	}
-	normalize, _ := openAICompatibilityModelExcludesImages(compat.Models, requestedModel)
+	normalize, _ := openAICompatibilityModelExcludesImages(config.EnabledOpenAICompatModels(compat.Models), requestedModel)
 	return normalize
 }
 

@@ -230,3 +230,16 @@ func TestNormalizeOpenAIMaxTokens(t *testing.T) {
 		}
 	})
 }
+
+func TestExecutorOptionsIgnoreDisabledRows(t *testing.T) {
+	compat := &config.OpenAICompatibility{Models: []config.OpenAICompatibilityModel{
+		{Name: "upstream", Alias: "public", UseMaxCompletionTokens: true, InputModalities: []string{"text"}, Disabled: true},
+		{Name: "upstream", Alias: "public"},
+	}}
+	if ShouldUseMaxCompletionTokensForModel(compat, "upstream", "public") {
+		t.Fatal("a disabled row chose the max-tokens field")
+	}
+	if ShouldNormalizeOpenAIToolResultsForModel(compat, "upstream", "public") {
+		t.Fatal("a disabled row chose the tool-result format")
+	}
+}

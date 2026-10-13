@@ -95,6 +95,9 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 	if oldModelCount != newModelCount {
 		details = append(details, fmt.Sprintf("models %d -> %d", oldModelCount, newModelCount))
 	}
+	if oldDisabled, newDisabled := countDisabledOpenAIModels(oldEntry.Models), countDisabledOpenAIModels(newEntry.Models); oldDisabled != newDisabled {
+		details = append(details, fmt.Sprintf("disabled models %d -> %d", oldDisabled, newDisabled))
+	}
 	if !equalStringMap(oldEntry.Headers, newEntry.Headers) {
 		details = append(details, "headers updated")
 	}
@@ -125,6 +128,10 @@ func countOpenAIModels(models []config.OpenAICompatibilityModel) int {
 		count++
 	}
 	return count
+}
+
+func countDisabledOpenAIModels(models []config.OpenAICompatibilityModel) int {
+	return countOpenAIModels(models) - countOpenAIModels(config.EnabledOpenAICompatModels(models))
 }
 
 func openAICompatKey(entry config.OpenAICompatibility, index int) (string, string) {

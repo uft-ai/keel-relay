@@ -865,6 +865,7 @@ upstream:
 #           operations: [chat, responses] # optional endpoint allowlist; omission preserves legacy routing
 #           native: [responses]           # forward Responses without chat translation; requires a native-capable upstream
 #           max-output-tokens: 32768       # optional independently verified output limit, not the context window
+#           disabled: false                # optional: true keeps this row and its settings but stops it serving requests
 #         # Native/operation metadata is unsupported in Home mode. Empty lists are rejected.
 #         # Entries sharing one client alias must agree on operation/native dispatch.
 #           thinking:                      # optional: omit to default to levels ["low","medium","high"]. Exceeding levels (e.g. "max", "xhigh") are clamped to "high"; explicitly declare levels here if the upstream supports them

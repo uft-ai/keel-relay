@@ -154,7 +154,7 @@ func resolveOpenAICompatUpstreamModelPool(cfg *internalconfig.Config, auth *Auth
 	if entry == nil {
 		return nil
 	}
-	return resolveModelAliasPoolFromConfigModels(requestedModel, asModelAliasEntries(entry.Models))
+	return resolveModelAliasPoolFromConfigModels(requestedModel, asModelAliasEntries(internalconfig.EnabledOpenAICompatModels(entry.Models)))
 }
 
 func preserveRequestedModelSuffix(requestedModel, resolved string) string {
@@ -485,7 +485,7 @@ func configuredModelAliasEntries(cfg *internalconfig.Config, auth *Auth) []model
 		}
 		if compatName != "" || strings.EqualFold(strings.TrimSpace(auth.Provider), "openai-compatibility") {
 			if entry := resolveOpenAICompatConfigForAuth(cfg, auth, providerKey, compatName); entry != nil {
-				models = asModelAliasEntries(entry.Models)
+				models = asModelAliasEntries(internalconfig.EnabledOpenAICompatModels(entry.Models))
 			}
 		}
 	}
@@ -646,7 +646,7 @@ func (m *Manager) rebuildAPIKeyModelAliasLocked(cfg *internalconfig.Config) {
 			}
 			if compatName != "" || strings.EqualFold(strings.TrimSpace(auth.Provider), "openai-compatibility") {
 				if entry := resolveOpenAICompatConfigForAuth(cfg, auth, providerKey, compatName); entry != nil {
-					compileAPIKeyModelAliasForModels(byAlias, entry.Models)
+					compileAPIKeyModelAliasForModels(byAlias, internalconfig.EnabledOpenAICompatModels(entry.Models))
 				}
 			}
 		}
@@ -942,7 +942,7 @@ func resolveUpstreamModelForOpenAICompatAPIKey(cfg *internalconfig.Config, auth 
 	if entry == nil {
 		return ""
 	}
-	return resolveModelAliasFromConfigModels(requestedModel, asModelAliasEntries(entry.Models))
+	return resolveModelAliasFromConfigModels(requestedModel, asModelAliasEntries(internalconfig.EnabledOpenAICompatModels(entry.Models)))
 }
 
 type apiKeyModelAliasTable map[string]map[string]string

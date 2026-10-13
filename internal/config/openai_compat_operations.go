@@ -78,6 +78,17 @@ func normalizeOperationList(values []string) []string {
 	return out
 }
 
+// EnabledOpenAICompatModels returns the rows that may serve requests. Callers
+// that select catalog, alias, pool, capability or executor options use it so a
+// disabled row can neither serve nor shadow an enabled row.
+func EnabledOpenAICompatModels(models []OpenAICompatibilityModel) []OpenAICompatibilityModel {
+	disabled := func(model OpenAICompatibilityModel) bool { return model.Disabled }
+	if !slices.ContainsFunc(models, disabled) {
+		return models
+	}
+	return slices.DeleteFunc(slices.Clone(models), disabled)
+}
+
 // NormalizeOpenAICompatModels normalizes operation lists in place.
 func NormalizeOpenAICompatModels(models []OpenAICompatibilityModel) {
 	for i := range models {

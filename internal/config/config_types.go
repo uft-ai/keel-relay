@@ -974,6 +974,10 @@ type OpenAICompatibilityModel struct {
 
 	// MaxOutputTokens advertises the model's output limit when known; zero means unknown.
 	MaxOutputTokens int `yaml:"max-output-tokens,omitempty" json:"max-output-tokens,omitempty"`
+
+	// Disabled keeps the row and its settings but stops it from serving requests.
+	// It is still validated, so enabling it again cannot reveal an invalid entry.
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 func (m OpenAICompatibilityModel) GetName() string { return m.Name }

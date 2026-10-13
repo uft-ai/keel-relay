@@ -1,6 +1,8 @@
 package diff
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -329,5 +331,18 @@ func TestComputeOpenAICompatModelsHashIncludesOperationMetadata(t *testing.T) {
 	reordered := ComputeOpenAICompatModelsHash([]config.OpenAICompatibilityModel{{Name: "m", Operations: []string{"responses", "chat"}}})
 	if reordered != ComputeOpenAICompatModelsHash([]config.OpenAICompatibilityModel{{Name: "m", Operations: []string{"chat", "responses"}}}) {
 		t.Fatal("operation order must not change model hash")
+	}
+}
+
+func TestComputeOpenAICompatModelsHashMarksOnlyDisabledRows(t *testing.T) {
+	legacy := []config.OpenAICompatibilityModel{{Name: "model", Alias: "public"}}
+	key := "model|public||image=false|force-mapping=false|is-compat=false|use-max-completion-tokens=false|input=|output=|thinking=null"
+	sum := sha256.Sum256([]byte(key))
+	if got := ComputeOpenAICompatModelsHash(legacy); got != hex.EncodeToString(sum[:]) {
+		t.Fatalf("legacy hash changed: %s", got)
+	}
+	disabled := []config.OpenAICompatibilityModel{{Name: "model", Alias: "public", Disabled: true}}
+	if ComputeOpenAICompatModelsHash(disabled) == ComputeOpenAICompatModelsHash(legacy) {
+		t.Fatal("disabling a row did not change the hash")
 	}
 }

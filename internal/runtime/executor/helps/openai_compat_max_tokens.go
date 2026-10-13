@@ -14,10 +14,10 @@ func ShouldUseMaxCompletionTokensForModel(compat *config.OpenAICompatibility, up
 	if compat == nil {
 		return false
 	}
-	if useMCT, matched := openAICompatibilityModelUsesMaxCompletionTokens(compat.Models, upstreamModel); matched {
+	if useMCT, matched := openAICompatibilityModelUsesMaxCompletionTokens(config.EnabledOpenAICompatModels(compat.Models), upstreamModel); matched {
 		return useMCT
 	}
-	useMCT, _ := openAICompatibilityModelUsesMaxCompletionTokens(compat.Models, requestedModel)
+	useMCT, _ := openAICompatibilityModelUsesMaxCompletionTokens(config.EnabledOpenAICompatModels(compat.Models), requestedModel)
 	return useMCT
 }
 

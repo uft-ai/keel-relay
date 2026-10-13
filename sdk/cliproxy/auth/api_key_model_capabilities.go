@@ -164,6 +164,7 @@ func homeAPIKeyModelOptions(auth *Auth, model, routeModel string) (internalconfi
 	if errDecode := json.Unmarshal(options.Models, &models); errDecode != nil {
 		return empty, false
 	}
+	models = internalconfig.EnabledOpenAICompatModels(models)
 	requested := strings.TrimSpace(model)
 	if requested == "" {
 		return empty, true
@@ -425,7 +426,7 @@ func compileAPIKeyModelCapabilitiesForAuth(cfg *internalconfig.Config, auth *Aut
 			compatName = strings.TrimSpace(auth.Attributes["compat_name"])
 		}
 		if entry := resolveOpenAICompatConfigForAuth(cfg, auth, providerKey, compatName); entry != nil {
-			compileOpenAICompatibleModelCapabilities(out, entry.Models)
+			compileOpenAICompatibleModelCapabilities(out, internalconfig.EnabledOpenAICompatModels(entry.Models))
 		}
 	}
 	if len(out) == 0 {
