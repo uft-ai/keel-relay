@@ -43,7 +43,7 @@ func TestNanImagesRejectMaskAndStreamingBeforeUpstream(t *testing.T) {
 	_ = writer.Close()
 	req.Payload = body.Bytes()
 	opts.Headers = http.Header{"Content-Type": []string{writer.FormDataContentType()}}
-	_, err = e.Execute(t.Context(), auth, req, opts)
+	_, err = e.Execute(ctx, auth, req, opts)
 	if err == nil || statusCodeForTest(err) != 400 || hits.Load() != 0 {
 		t.Fatalf("multipart mask or attempt fence: err=%v hits=%d", err, hits.Load())
 	}
