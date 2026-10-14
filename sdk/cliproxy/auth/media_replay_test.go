@@ -27,7 +27,19 @@ type mediaReplayExecutor struct {
 	// streamErr, when set, ends the next opened stream after payloads.
 	streamErr error
 	payloads  [][]byte
+	// empty, when set, opens the next stream and closes it without a chunk.
+	empty bool
 }
+
+// providerStatusError is an upstream failure that carries its own status and headers.
+type providerStatusError struct {
+	status  int
+	headers http.Header
+}
+
+func (e *providerStatusError) Error() string        { return http.StatusText(e.status) }
+func (e *providerStatusError) StatusCode() int      { return e.status }
+func (e *providerStatusError) Headers() http.Header { return e.headers }
 
 func (e *mediaReplayExecutor) Identifier() string { return e.provider }
 
@@ -62,6 +74,12 @@ func (e *mediaReplayExecutor) ExecuteStream(ctx context.Context, auth *Auth, _ c
 	e.ctx = ctx
 	e.calls = append(e.calls, auth.ID)
 	headers := http.Header{"X-Provider": []string{"kept"}}
+	if e.empty {
+		e.empty = false
+		chunks := make(chan cliproxyexecutor.StreamChunk)
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Headers: headers, Chunks: chunks}, nil
+	}
 	if e.streamErr != nil {
 		chunks := make(chan cliproxyexecutor.StreamChunk, len(e.payloads)+1)
 		for _, payload := range e.payloads {
@@ -296,14 +314,16 @@ func TestSentImageStreamFailureDoesNotMoveToAnotherCredential(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		failure error
+		empty   bool
 		status  int
 	}{
 		{name: "before the first payload", failure: busy(), status: http.StatusServiceUnavailable},
 		{name: "disconnect before the first payload", failure: errors.New("unexpected EOF"), status: 0},
+		{name: "empty stream", empty: true, status: 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m, executor, _ := mediaReplayFixture(t, "https://gateway.example/v1", 3)
-			executor.streamErr = test.failure
+			executor.streamErr, executor.empty = test.failure, test.empty
 			chunkErr, headers, err := streamError(t, m, executor.provider, "media/image-model", imageStream)
 			if err != nil || statusOf(chunkErr) != test.status || len(executor.callList()) != 1 {
 				t.Fatalf("calls=%v err=%v chunk=%v", executor.callList(), err, chunkErr)
@@ -323,16 +343,17 @@ func TestSentImageStreamFailureDoesNotMoveToAnotherCredential(t *testing.T) {
 	})
 }
 
-// After the first payload, an ambiguous media error carries the stop; an explicit
-// rejection does not.
+// After the first payload, an ambiguous media error carries the stop and keeps its
+// own status and headers; an explicit rejection is forwarded unchanged.
 func TestImageStreamErrorAfterPayloadCarriesTheStop(t *testing.T) {
+	own := http.Header{"X-Error": []string{"own"}}
 	for _, test := range []struct {
 		name    string
 		failure error
 		stopped bool
 	}{
-		{name: "server error", failure: &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "busy"}, stopped: true},
-		{name: "rate limited", failure: &Error{HTTPStatus: http.StatusTooManyRequests, Message: "slow down"}},
+		{name: "server error", failure: &providerStatusError{status: http.StatusServiceUnavailable, headers: own}, stopped: true},
+		{name: "rate limited", failure: &providerStatusError{status: http.StatusTooManyRequests, headers: own}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m, executor, _ := mediaReplayFixture(t, "https://gateway.example/v1", 3)
@@ -341,8 +362,15 @@ func TestImageStreamErrorAfterPayloadCarriesTheStop(t *testing.T) {
 			if err != nil || chunkErr == nil || isRequestStopError(chunkErr) != test.stopped || len(executor.callList()) != 1 {
 				t.Fatalf("calls=%v err=%v chunk=%#v", executor.callList(), err, chunkErr)
 			}
-			if !test.stopped && chunkErr != test.failure {
-				t.Fatalf("an explicit rejection changed shape: %#v", chunkErr)
+			if !test.stopped {
+				if chunkErr != test.failure {
+					t.Fatalf("an explicit rejection changed shape: %#v", chunkErr)
+				}
+				return
+			}
+			headers, ok := chunkErr.(interface{ Headers() http.Header })
+			if statusOf(chunkErr) != http.StatusServiceUnavailable || !ok || headers.Headers().Get("X-Error") != "own" {
+				t.Fatalf("the stopped error lost its own status or headers: %#v", chunkErr)
 			}
 		})
 	}

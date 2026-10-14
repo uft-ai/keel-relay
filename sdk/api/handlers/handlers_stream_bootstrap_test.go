@@ -562,22 +562,28 @@ func TestExecuteStreamWithAuthManager_DoesNotRestartAnAmbiguousImageStream(t *te
 	for _, test := range []struct {
 		name    string
 		image   bool
-		dropped bool
+		payload string
 		calls   int
+		// header is the response header the client error must carry.
+		header string
 	}{
-		{name: "image without a payload", image: true, calls: 1},
-		{name: "image with a hidden payload", image: true, dropped: true, calls: 1},
-		{name: "chat with a hidden payload", dropped: true, calls: 2},
+		{name: "image without a payload", image: true, calls: 1, header: "X-Provider"},
+		{name: "image with a hidden payload", image: true, payload: "drop", calls: 1, header: "X-Error"},
+		{name: "image with a delivered payload", image: true, payload: "partial", calls: 1, header: "X-Error"},
+		{name: "chat with a hidden payload", payload: "drop", calls: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			executor := &bootstrapStreamExecutor{stream: func(ctx context.Context, call int) (*coreexecutor.StreamResult, error) {
 				coreexecutor.MarkUpstreamAttempt(ctx)
 				chunks := make(chan coreexecutor.StreamChunk, 2)
 				if call == 1 {
-					if test.dropped {
-						chunks <- coreexecutor.StreamChunk{Payload: []byte("drop")}
+					if test.payload != "" {
+						chunks <- coreexecutor.StreamChunk{Payload: []byte(test.payload)}
 					}
-					chunks <- coreexecutor.StreamChunk{Err: &coreauth.Error{HTTPStatus: http.StatusServiceUnavailable, Message: "busy"}}
+					chunks <- coreexecutor.StreamChunk{Err: modelExecutionStatusHeaderError{
+						statusCode: http.StatusServiceUnavailable, message: "busy",
+						headers: http.Header{"X-Error": []string{"own"}},
+					}}
 				} else {
 					chunks <- coreexecutor.StreamChunk{Payload: []byte("ok")}
 				}
@@ -615,10 +621,10 @@ func TestExecuteStreamWithAuthManager_DoesNotRestartAnAmbiguousImageStream(t *te
 			if failure == nil || failure.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("error = %+v", failure)
 			}
-			// Without a payload the error carries the stream's headers, as before. A later
-			// chunk error keeps its own headers; this one has none, as before.
-			if want := !test.dropped; (failure.Addon.Get("X-Provider") == "kept") != want {
-				t.Fatalf("error headers = %v", failure.Addon)
+			// Without a payload the error carries the stream's headers, as before. After a
+			// payload, hidden or delivered, it keeps the provider error's own headers.
+			if failure.Addon.Get(test.header) == "" {
+				t.Fatalf("error headers = %v, want %s", failure.Addon, test.header)
 			}
 		})
 	}
