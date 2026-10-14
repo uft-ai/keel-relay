@@ -56,11 +56,6 @@ func (h *OpenAIAPIHandler) handleXAISpeech(c *gin.Context) {
 		writeSpeechError(c, clienterror.HTTPStatusFromErrorOr(err, http.StatusBadRequest), fmt.Sprintf("Invalid request: %v", err))
 		return
 	}
-	if len(raw) > maxXAISpeechBody {
-		writeSpeechError(c, http.StatusBadRequest, "request body is larger than 1MB")
-		return
-	}
-
 	requested := strings.TrimSpace(gjson.GetBytes(raw, "model").String())
 	if c.Request.URL.Path == "/v1/audio/speech" {
 		if info := registry.LookupModelInfo(requested); info != nil {
@@ -75,6 +70,11 @@ func (h *OpenAIAPIHandler) handleXAISpeech(c *gin.Context) {
 				}
 			}
 		}
+	}
+	// The 1 MB cap is xAI's; a compatible speech model above applies its own provider limit.
+	if len(raw) > maxXAISpeechBody {
+		writeSpeechError(c, http.StatusBadRequest, "request body is larger than 1MB")
+		return
 	}
 	model, ok := speechRoutingModel(requested)
 	if !ok {

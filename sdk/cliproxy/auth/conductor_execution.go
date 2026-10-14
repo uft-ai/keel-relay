@@ -82,6 +82,19 @@ func hasUpstreamExecutionAttempt(err error) bool {
 	return errors.As(err, &marked) && marked != nil
 }
 
+// stopMediaAfterAmbiguousAttempt reports whether a speech, transcription or image
+// request must not move to another credential. After an attempted upstream exchange
+// that ended without a status, with 408 or with a 5xx, the provider may have done
+// the work.
+// Other statuses keep the normal handling, including 401 and 429 failover.
+func stopMediaAfterAmbiguousAttempt(err error, opts cliproxyexecutor.Options) bool {
+	if !hasUpstreamExecutionAttempt(err) || !nonReplayableMediaOperation(opts) {
+		return false
+	}
+	status := statusCodeFromError(err)
+	return status == 0 || status == http.StatusRequestTimeout || status >= http.StatusInternalServerError
+}
+
 func unwrapUpstreamExecutionAttempt(err error) error {
 	marked, ok := err.(*upstreamExecutionAttemptError)
 	if !ok || marked == nil || marked.cause == nil {
@@ -655,7 +668,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				} else {
 					m.recordExecutionResult(execCtx, result, auth, false)
 				}
-				if IsNanCompatibleAuth(auth) && hasUpstreamExecutionAttempt(errExec) && nonReplayableMediaOperation(execOpts) {
+				if stopMediaAfterAmbiguousAttempt(errExec, execOpts) {
 					return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
 				}
 				if okAction {

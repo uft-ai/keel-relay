@@ -680,23 +680,26 @@ func (e *imageCaptureExecutor) Execute(context.Context, *coreauth.Auth, coreexec
 	return coreexecutor.Response{Payload: []byte(`{"created":1,"data":[{"b64_json":"AA=="}],"provider_extension":"kept"}`)}, nil
 }
 
-// A NaN image answer passes through unchanged, including fields the generic
-// conversion does not know. The official host selects that rule; the entry name
-// does not matter. The generic conversion is not asserted here.
-func TestNanImagesResponseKeepsProviderFields(t *testing.T) {
-	executor := &imageCaptureExecutor{}
-	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
-	manager.RegisterExecutor(executor)
-	auth := &coreauth.Auth{ID: t.Name(), Provider: executor.Identifier(), Status: coreauth.StatusActive, Attributes: map[string]string{"base_url": "https://api.nan.builders/v1"}}
-	if _, err := manager.Register(context.Background(), auth); err != nil {
-		t.Fatal(err)
-	}
-	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "host-test-image", Type: registry.OpenAIImageModelType}})
-	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
-	manager.RefreshSchedulerEntry(auth.ID)
-	handler := NewOpenAIAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager))
-	resp := performImagesEndpointRequest(t, imagesGenerationsPath, "application/json", strings.NewReader(`{"model":"host-test-image","prompt":"draw"}`), handler.ImagesGenerations)
-	if resp.Code != http.StatusOK || gjson.Get(resp.Body.String(), "provider_extension").String() != "kept" {
-		t.Fatalf("status=%d body=%s", resp.Code, resp.Body)
+// A compatible image answer passes through unchanged, including fields the xAI
+// conversion does not know, whatever the provider's host.
+func TestCompatibleImagesResponseKeepsProviderFields(t *testing.T) {
+	for _, baseURL := range []string{"https://api.nan.builders/v1", "https://gateway.example/v1"} {
+		t.Run(baseURL, func(t *testing.T) {
+			executor := &imageCaptureExecutor{}
+			manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, nil)
+			manager.RegisterExecutor(executor)
+			auth := &coreauth.Auth{ID: t.Name(), Provider: executor.Identifier(), Status: coreauth.StatusActive, Attributes: map[string]string{"base_url": baseURL}}
+			if _, err := manager.Register(context.Background(), auth); err != nil {
+				t.Fatal(err)
+			}
+			registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "host-test-image", Type: registry.OpenAIImageModelType}})
+			t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+			manager.RefreshSchedulerEntry(auth.ID)
+			handler := NewOpenAIAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager))
+			resp := performImagesEndpointRequest(t, imagesGenerationsPath, "application/json", strings.NewReader(`{"model":"host-test-image","prompt":"draw"}`), handler.ImagesGenerations)
+			if resp.Code != http.StatusOK || gjson.Get(resp.Body.String(), "provider_extension").String() != "kept" {
+				t.Fatalf("status=%d body=%s", resp.Code, resp.Body)
+			}
+		})
 	}
 }

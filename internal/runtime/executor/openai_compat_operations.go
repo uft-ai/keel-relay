@@ -20,6 +20,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
+const nanMaxTranscriptionRequestBytes = 25_000_000
+
 func (e *OpenAICompatExecutor) ExecuteEmbeddings(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return e.executeUtility(ctx, auth, req, opts, "/embeddings", helps.ParseOpenAIUsage)
 }
@@ -61,6 +63,10 @@ func (e *OpenAICompatExecutor) executeUtility(ctx context.Context, auth *cliprox
 	}
 	if err != nil {
 		return resp, err
+	}
+	// NaN documents 25 MB per transcription request, including multipart framing.
+	if endpoint == "/audio/transcriptions" && cliproxyauth.IsNanCompatibleAuth(auth) && len(payload) > nanMaxTranscriptionRequestBytes {
+		return resp, statusErr{code: http.StatusRequestEntityTooLarge, msg: "NaN transcription requests must not exceed 25 MB, including multipart framing"}
 	}
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, errRequest := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))

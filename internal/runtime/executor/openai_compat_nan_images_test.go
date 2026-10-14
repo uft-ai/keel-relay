@@ -66,6 +66,42 @@ func TestNanNamedEntryOnOtherHostGetsGenericImages(t *testing.T) {
 	}
 }
 
+// NaN's 25 MB transcription limit is NaN's: an oversized request never reaches NaN,
+// while the same request goes to a generic provider, which applies its own limit.
+func TestNanTranscriptionLimitStaysWithNan(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("model", "whisper")
+	part, _ := writer.CreateFormFile("file", "large.wav")
+	_, _ = part.Write(bytes.Repeat([]byte{1}, nanMaxTranscriptionRequestBytes))
+	_ = writer.Close()
+	req := cliproxyexecutor.Request{Model: "whisper", Payload: body.Bytes()}
+	opts := cliproxyexecutor.Options{SourceFormat: "openai-transcription", Headers: http.Header{"Content-Type": []string{writer.FormDataContentType()}}}
+
+	var nanHits atomic.Int32
+	ctx := context.WithValue(t.Context(), "cliproxy.roundtripper", roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		nanHits.Add(1)
+		return nil, errors.New("unexpected upstream request")
+	}))
+	nan := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": "https://api.nan.builders/v1", "compat_name": "renamed"}}
+	_, err := NewOpenAICompatExecutor("openai-compatible-renamed", &config.Config{}).Execute(ctx, nan, req, opts)
+	if statusCodeForTest(err) != http.StatusRequestEntityTooLarge || nanHits.Load() != 0 {
+		t.Fatalf("NaN oversized transcription: err=%v hits=%d", err, nanHits.Load())
+	}
+
+	var genericHits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		genericHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"ok"}`))
+	}))
+	defer server.Close()
+	generic := &cliproxyauth.Auth{Attributes: map[string]string{"base_url": server.URL, "compat_name": "nan"}}
+	if _, err := NewOpenAICompatExecutor("openai-compatible-nan", &config.Config{}).Execute(t.Context(), generic, req, opts); err != nil || genericHits.Load() != 1 {
+		t.Fatalf("generic transcription: err=%v hits=%d", err, genericHits.Load())
+	}
+}
+
 func statusCodeForTest(err error) int {
 	if value, ok := err.(interface{ StatusCode() int }); ok {
 		return value.StatusCode()

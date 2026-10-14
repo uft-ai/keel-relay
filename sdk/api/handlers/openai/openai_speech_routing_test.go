@@ -129,6 +129,19 @@ func TestSpeechEndpointsRouteSpeechOnlyModelsToExecutor(t *testing.T) {
 	}
 }
 
+func TestXAISpeechKeepsItsBodyCap(t *testing.T) {
+	executor := &speechCaptureExecutor{}
+	handler, _ := newSpeechRoutingTestHandlers(t, executor)
+	body := `{"model":"grok-tts","input":"` + strings.Repeat("a", maxXAISpeechBody) + `"}`
+	resp := performSpeechRoutingRequest(t, "/v1/audio/speech", body, handler.AudioSpeech)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "larger than 1MB") {
+		t.Fatalf("status = %d body = %s, want the xAI 1MB rejection", resp.Code, resp.Body.String())
+	}
+	if models, _ := executor.calls(); len(models) != 0 {
+		t.Fatalf("oversized xAI speech reached the executor: %v", models)
+	}
+}
+
 func TestChatAndResponsesRejectSpeechOnlyModels(t *testing.T) {
 	executor := &speechCaptureExecutor{}
 	chat, responses := newSpeechRoutingTestHandlers(t, executor)

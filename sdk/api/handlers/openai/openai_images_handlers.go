@@ -12,7 +12,6 @@ import (
 	"net/textproto"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +20,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -1182,7 +1180,7 @@ func (h *OpenAIAPIHandler) handleOpenAICompatImages(c *gin.Context, compatReq []
 		h.streamOpenAICompatImages(c, compatReq, imageModel)
 		return
 	}
-	h.collectImagesWithModel(c, compatReq, imageModel, responseFormat)
+	h.collectImagesWithModel(c, compatReq, imageModel, responseFormat, false)
 }
 
 func (h *OpenAIAPIHandler) handleRoutedImages(c *gin.Context, imageReq []byte, imageModel string, stream bool) {
@@ -1463,18 +1461,16 @@ func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []
 
 func (h *OpenAIAPIHandler) collectXAIImages(c *gin.Context, xaiReq []byte, responseFormat string) {
 	model := strings.TrimSpace(gjson.GetBytes(xaiReq, "model").String())
-	h.collectImagesWithModel(c, xaiReq, model, responseFormat)
+	h.collectImagesWithModel(c, xaiReq, model, responseFormat, true)
 }
 
-func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string) {
+// collectImagesWithModel returns one image response. fromXAI rebuilds xAI's answer in
+// the OpenAI Images shape; a compatible provider already answers in that shape, so
+// its response, including provider fields, is returned unchanged.
+func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string, fromXAI bool) {
 	c.Header("Content-Type", "application/json")
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	var nanResponse atomic.Bool
-	cliCtx = handlers.WithSelectedAuthIDCallback(cliCtx, func(id string) {
-		auth, _ := h.AuthManager.GetByID(id)
-		nanResponse.Store(coreauth.IsNanCompatibleAuth(auth))
-	})
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 
 	model = strings.TrimSpace(model)
@@ -1492,7 +1488,7 @@ func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byt
 
 	out := resp
 	var err error
-	if !nanResponse.Load() {
+	if fromXAI {
 		out, err = buildImagesAPIResponseFromXAI(resp, responseFormat)
 	}
 	if err != nil {

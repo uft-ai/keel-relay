@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,11 @@ func TestConfiguredSpeechHandlerPreservesProviderBytesAndMIME(t *testing.T) {
 	if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), want) || response.Header().Get("Content-Type") != "audio/wav" {
 		t.Fatalf("audio response=%d MIME=%s bytes=%v", response.Code, response.Header().Get("Content-Type"), response.Body.Bytes())
 	}
+	// xAI's 1 MB speech cap does not apply to a compatible speech model.
+	large := `{"model":"nan/kokoro","input":"` + strings.Repeat("a", maxXAISpeechBody) + `","voice":"af_heart"}`
+	if response := performSpeechRoutingRequest(t, "/v1/audio/speech", large, h.AudioSpeech); response.Code != 200 {
+		t.Fatalf("large compatible speech status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func TestTranscriptionHandlerValidatesMultipartBeforeExecution(t *testing.T) {
@@ -84,12 +90,17 @@ func TestTranscriptionHandlerValidatesMultipartBeforeExecution(t *testing.T) {
 	}
 }
 
-func TestTranscriptionHandlerEnforcesTotalRequestLimit(t *testing.T) {
+func TestTranscriptionHandlerEnforcesTheGatewayRequestLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	const limit = 64
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(bytes.Repeat([]byte("x"), maxTranscriptionRequestBytes+1)))
-	ctx.Request.Header.Set("Content-Type", "multipart/form-data; boundary=fixture")
+	request := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(bytes.Repeat([]byte("x"), limit+1)))
+	request.ContentLength = -1
+	request.Body = http.MaxBytesReader(recorder, request.Body, limit)
+	request.Header.Set("Content-Type", "multipart/form-data; boundary=fixture")
+	ctx.Request = request
+	ctx.Set(handlers.MaxRequestBodyBytesContextKey, int64(limit))
 	(&OpenAIAPIHandler{}).AudioTranscriptions(ctx)
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized upload status=%d", recorder.Code)
