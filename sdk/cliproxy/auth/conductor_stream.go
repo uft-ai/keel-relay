@@ -68,6 +68,12 @@ func (e *streamBootstrapError) Headers() http.Header {
 	return cloneHTTPHeader(e.headers)
 }
 
+// stoppedStreamError puts the stop marker inside the bootstrap envelope, so callers
+// read the same headers and status as before and also see that the request ended.
+func stoppedStreamError(err error, headers http.Header) error {
+	return &streamBootstrapError{cause: wrapRequestStopError(err), headers: cloneHTTPHeader(headers)}
+}
+
 func streamErrorResult(headers http.Header, err error) *cliproxyexecutor.StreamResult {
 	ch := make(chan cliproxyexecutor.StreamChunk, 1)
 	ch <- cliproxyexecutor.StreamChunk{Err: err}
@@ -166,6 +172,14 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 				result.CredentialScope = isCredentialScopedError(chunk.Err)
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
+			}
+			// The stream is open, so the exchange was attempted.
+			if chunk.Err != nil && stopMediaAfterAmbiguousAttempt(markUpstreamExecutionAttempt(chunk.Err), opts) {
+				var headers http.Header
+				if he, ok := chunk.Err.(interface{ Headers() http.Header }); ok && he != nil {
+					headers = he.Headers()
+				}
+				chunk.Err = stoppedStreamError(chunk.Err, headers)
 			}
 			if !forward {
 				return false
@@ -329,6 +343,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			}
 			applyRequestScopedActionToResult(action, okAction, &result)
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
+			if stopMediaAfterAmbiguousAttempt(errStream, execOpts) {
+				return nil, wrapRequestStopError(errStream)
+			}
 			if okAction {
 				if isRequestScopedStop(action, okAction) {
 					return nil, wrapRequestStopError(errStream)
@@ -418,6 +435,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 				discardStreamChunks(streamResult.Chunks)
+				if stopMediaAfterAmbiguousAttempt(bootstrapErr, execOpts) {
+					return nil, wrapRequestStopError(newStreamBootstrapError(bootstrapErr, streamResult.Headers))
+				}
 				if isRequestScopedStop(action, okAction) {
 					return nil, wrapRequestStopError(bootstrapErr)
 				}
@@ -448,6 +468,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 				discardStreamChunks(streamResult.Chunks)
+				if stopMediaAfterAmbiguousAttempt(bootstrapErr, execOpts) {
+					return nil, wrapRequestStopError(newStreamBootstrapError(bootstrapErr, streamResult.Headers))
+				}
 				lastErr = bootstrapErr
 				if result.CredentialScope {
 					currentErr := newStreamBootstrapError(bootstrapErr, streamResult.Headers)
@@ -464,6 +487,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 			discardStreamChunks(streamResult.Chunks)
 			currentErr := newStreamBootstrapError(bootstrapErr, streamResult.Headers)
+			if stopMediaAfterAmbiguousAttempt(bootstrapErr, execOpts) {
+				return nil, wrapRequestStopError(currentErr)
+			}
 			return nil, preferredExecutionAttemptError(currentErr, upstreamErr)
 		}
 
@@ -476,6 +502,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			warnLogUpstreamFailure(ctx, entry, provider, execModel, auth, time.Since(startStream), emptyErr)
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, UpstreamModel: execReq.Model, RouteModel: routeModel, Success: false, Error: resultErrorFromError(emptyErr), Options: execOpts, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch}
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
+			if stopMediaAfterAmbiguousAttempt(emptyErr, execOpts) {
+				return nil, wrapRequestStopError(currentErr)
+			}
 			if idx < len(execModels)-1 {
 				lastErr = emptyErr
 				continue

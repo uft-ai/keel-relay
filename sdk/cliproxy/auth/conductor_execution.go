@@ -295,7 +295,14 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		retryRoundPending = false
 		retryRoundWaited = false
 		if isRequestTerminatedError(errStream) || isRequestStopError(errStream) {
-			return nil, unwrapExecutionBoundaryError(errStream)
+			err := unwrapExecutionBoundaryError(errStream)
+			// A stopped media stream keeps the bootstrap result and headers it had before,
+			// with the stop inside, so the handler does not start it again.
+			var bootstrapErr *streamBootstrapError
+			if stopMediaAfterAmbiguousAttempt(errStream, opts) && errors.As(err, &bootstrapErr) && bootstrapErr != nil {
+				return streamErrorResult(bootstrapErr.Headers(), stoppedStreamError(bootstrapErr.cause, bootstrapErr.headers)), nil
+			}
+			return nil, err
 		}
 		lastErr = errStream
 		wait, shouldRetry := m.shouldRetryAfterErrorWithAttempted(ctx, opts, errStream, attempt, normalized, retryModel, maxWait, homeRetryLimit, defaultRequestRetry, roundAttempted)
@@ -1234,6 +1241,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			if errCtx := execCtx.Err(); errCtx != nil && ctx != nil && ctx.Err() != nil {
 				return nil, errCtx
+			}
+			if isRequestStopError(errStream) {
+				return nil, errStream
 			}
 			action, okAction := matchRequestScopedErrorAction(auth, errStream, m.runtimeConfigSnapshot())
 			if okAction {

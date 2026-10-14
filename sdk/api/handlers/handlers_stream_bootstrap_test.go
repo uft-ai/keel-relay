@@ -555,6 +555,75 @@ func TestExecuteStreamWithAuthManager_RetriesAfterDroppedBootstrapPayload(t *tes
 	}
 }
 
+// A streamed image request that may have reached the provider is not started again
+// by the bootstrap retry, whether its first payload was missing or hidden from the
+// client. A chat stream keeps the retry. The provider's headers stay on the error.
+func TestExecuteStreamWithAuthManager_DoesNotRestartAnAmbiguousImageStream(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		image   bool
+		dropped bool
+		calls   int
+	}{
+		{name: "image without a payload", image: true, calls: 1},
+		{name: "image with a hidden payload", image: true, dropped: true, calls: 1},
+		{name: "chat with a hidden payload", dropped: true, calls: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &bootstrapStreamExecutor{stream: func(ctx context.Context, call int) (*coreexecutor.StreamResult, error) {
+				coreexecutor.MarkUpstreamAttempt(ctx)
+				chunks := make(chan coreexecutor.StreamChunk, 2)
+				if call == 1 {
+					if test.dropped {
+						chunks <- coreexecutor.StreamChunk{Payload: []byte("drop")}
+					}
+					chunks <- coreexecutor.StreamChunk{Err: &coreauth.Error{HTTPStatus: http.StatusServiceUnavailable, Message: "busy"}}
+				} else {
+					chunks <- coreexecutor.StreamChunk{Payload: []byte("ok")}
+				}
+				close(chunks)
+				return &coreexecutor.StreamResult{Headers: http.Header{"X-Provider": []string{"kept"}}, Chunks: chunks}, nil
+			}}
+			handler, _ := registerBootstrapExecutor(t, executor)
+			handler.Cfg.Streaming.BootstrapRetries = 2
+			handler.SetPluginHost(&handlerInterceptorTestHost{interceptStreamChunk: func(_ context.Context, req pluginapi.StreamChunkInterceptRequest) pluginapi.StreamChunkInterceptResponse {
+				return pluginapi.StreamChunkInterceptResponse{Body: cloneBytes(req.Body), DropChunk: string(req.Body) == "drop"}
+			}})
+			run := handler.ExecuteStreamWithAuthManager
+			handlerType := "openai"
+			if test.image {
+				run, handlerType = handler.ExecuteImageStreamWithAuthManager, "openai-image"
+			}
+			dataChan, _, errChan := run(context.Background(), handlerType, "bootstrap-model", []byte(`{"model":"bootstrap-model","stream":true}`), "")
+			for range dataChan {
+			}
+			var failure *interfaces.ErrorMessage
+			for msg := range errChan {
+				if msg != nil {
+					failure = msg
+				}
+			}
+			if executor.Calls() != test.calls {
+				t.Fatalf("stream attempts = %d, want %d", executor.Calls(), test.calls)
+			}
+			if !test.image {
+				if failure != nil {
+					t.Fatalf("chat retry failed: %+v", failure)
+				}
+				return
+			}
+			if failure == nil || failure.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("error = %+v", failure)
+			}
+			// Without a payload the error carries the stream's headers, as before. A later
+			// chunk error keeps its own headers; this one has none, as before.
+			if want := !test.dropped; (failure.Addon.Get("X-Provider") == "kept") != want {
+				t.Fatalf("error headers = %v", failure.Addon)
+			}
+		})
+	}
+}
+
 func TestExecuteStreamWithAuthManager_ResetsResponsesValidatorOnBootstrapRetry(t *testing.T) {
 	executor := &bootstrapStreamExecutor{stream: func(_ context.Context, call int) (*coreexecutor.StreamResult, error) {
 		chunks := make(chan coreexecutor.StreamChunk, 2)
