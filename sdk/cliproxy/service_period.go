@@ -8,7 +8,8 @@ import (
 )
 
 func (s *Service) initializePeriodLedger(ctx context.Context) error {
-	if s.coreManager == nil || s.coreManager.PeriodLedger() != nil || (s.cfg != nil && s.cfg.Home.Enabled) {
+	cfg := s.currentConfig()
+	if s.coreManager == nil || s.coreManager.PeriodLedger() != nil || (cfg != nil && cfg.Home.Enabled) {
 		return nil
 	}
 	store := s.periodStore
