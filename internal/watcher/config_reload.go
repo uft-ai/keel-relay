@@ -17,6 +17,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var loadConfigFileFunc = config.LoadConfig
+
 func (w *Watcher) stopConfigReloadTimer() {
 	w.configReloadMu.Lock()
 	if w.configReloadTimer != nil {
@@ -48,74 +50,53 @@ func (w *Watcher) ReloadConfigIfChanged() {
 	w.reloadConfigIfChanged()
 }
 
-// configReloadPasses bounds how often one reload follows a file that keeps changing.
-// After the last unstable pass nothing is recorded, so the filesystem event that the
-// latest write produced reloads the file again. Raise the bound, or move to a write
-// generation shared with the config writers, if writers can outpace three passes.
-const configReloadPasses = 3
-
-// reloadConfigIfChanged records a file hash only when the file held that content both
-// before and after a successful load. A write that lands during a reload therefore
-// gets its own pass instead of being recorded as already applied, while a file that
-// LoadConfig normalizes (for example by hashing secret-key) settles on the second pass.
 func (w *Watcher) reloadConfigIfChanged() {
+	// File events and post-save reloads may arrive together; an older read must
+	// not apply after a newer one.
 	w.configApplyMu.Lock()
 	defer w.configApplyMu.Unlock()
 
-	for pass := 0; pass < configReloadPasses; pass++ {
-		before, ok := w.configFileHash()
-		if !ok {
-			return
-		}
-		w.clientsMutex.RLock()
-		currentHash := w.lastConfigHash
-		w.clientsMutex.RUnlock()
-		if currentHash != "" && currentHash == before {
-			log.Debugf("config file content unchanged (hash match), skipping reload")
-			return
-		}
-		log.Infof("config file changed, reloading: %s", w.configPath)
-		if !w.reloadConfig() {
-			return
-		}
-		after, okAfter := w.configFileHash()
-		w.clientsMutex.Lock()
-		if okAfter && after == before {
-			w.lastConfigHash = before
-		} else {
-			// The applied content is no longer on disk. Forget the recorded hash so
-			// that a file restored to earlier bytes is still loaded again.
-			w.lastConfigHash = ""
-		}
-		w.clientsMutex.Unlock()
-		if okAfter && after == before {
-			w.persistConfigAsync()
-			return
-		}
-	}
-	log.Warnf("config file kept changing during %d reloads; the next change event reloads it again", configReloadPasses)
-}
-
-// configFileHash hashes the config file; it reports false for a missing or empty file.
-func (w *Watcher) configFileHash() (string, bool) {
 	data, err := os.ReadFile(w.configPath)
 	if err != nil {
 		log.Errorf("failed to read config file for hash check: %v", err)
-		return "", false
+		return
 	}
 	if len(data) == 0 {
 		log.Debugf("ignoring empty config file write event")
-		return "", false
+		return
 	}
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), true
+	newHash := hex.EncodeToString(sum[:])
+
+	w.clientsMutex.RLock()
+	currentHash := w.lastConfigHash
+	w.clientsMutex.RUnlock()
+
+	if currentHash != "" && currentHash == newHash {
+		log.Debugf("config file content unchanged (hash match), skipping reload")
+		return
+	}
+	log.Infof("config file changed, reloading: %s", w.configPath)
+	if w.reloadConfig() {
+		// Record the bytes the reload actually parsed, not the change-check read or a
+		// later re-read: a write landing between them must not count as applied. A
+		// write-back during load only costs one extra reload.
+		w.clientsMutex.Lock()
+		appliedHash := newHash
+		if w.config != nil && w.config.SourceHash != "" {
+			appliedHash = w.config.SourceHash
+		}
+		w.lastConfigHash = appliedHash
+		w.clientsMutex.Unlock()
+		w.persistConfigAsync()
+	}
 }
 
 func (w *Watcher) reloadConfig() bool {
 	log.Debug("=========================== CONFIG RELOAD ============================")
 	log.Debugf("starting config reload from: %s", w.configPath)
 
-	newConfig, errLoadConfig := config.LoadConfig(w.configPath)
+	newConfig, errLoadConfig := loadConfigFileFunc(w.configPath)
 	if errLoadConfig != nil {
 		log.Errorf("failed to reload config: %v", errLoadConfig)
 		return false
